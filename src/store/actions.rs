@@ -16,9 +16,9 @@ use nsh_core::time::unix_ms;
 
 use super::{
     account_by_id, account_count, account_ids, busy, clear_notice, clear_selection, export_items,
-    insert_account, proxy, proxy_testing, refresh_account, set_busy, set_import_progress,
-    set_notice, set_proxy_testing, set_switching_account_id, set_token, set_update_status,
-    switching_account_id, update_checking, ImportProgress, Tone, UpdateStatus,
+    insert_account, proxy, proxy_testing, refresh_account, selected_account_ids, set_busy,
+    set_import_progress, set_notice, set_proxy_testing, set_switching_account_id, set_token,
+    set_update_status, switching_account_id, update_checking, ImportProgress, Tone, UpdateStatus,
 };
 use crate::google::{self, ImportEntry};
 use crate::launch;
@@ -102,6 +102,23 @@ fn run_concurrent_queue<T, R>(
     }
 }
 
+/// Refreshes selected accounts when any are checked, otherwise refreshes all accounts.
+pub(crate) fn refresh_selected_or_all() {
+    if busy() {
+        return;
+    }
+    if account_count() == 0 {
+        set_notice("还没有账号", Tone::Info);
+        return;
+    }
+    let selected = selected_account_ids();
+    if selected.is_empty() {
+        refresh_ids(account_ids(), false);
+    } else {
+        refresh_ids(selected, true);
+    }
+}
+
 /// Refreshes every account's quota concurrently (up to 5 workers), reporting one notice at the end.
 pub(crate) fn refresh_all() {
     if busy() {
@@ -111,7 +128,11 @@ pub(crate) fn refresh_all() {
         set_notice("还没有账号", Tone::Info);
         return;
     }
-    let ids = account_ids();
+    refresh_ids(account_ids(), false);
+}
+
+fn refresh_ids(ids: Vec<u32>, is_selection: bool) {
+    let count = ids.len();
     set_busy(true);
     run_concurrent_queue(
         ids,
@@ -123,11 +144,15 @@ pub(crate) fn refresh_all() {
             })
         },
         |_, _, _, _| {},
-        |failures| {
+        move |failures| {
             set_busy(false);
             let failed = failures.into_iter().filter(|failed| *failed).count();
             if failed == 0 {
-                set_notice("额度已刷新", Tone::Ok);
+                if is_selection {
+                    set_notice(format!("已刷新 {count} 个选中账号"), Tone::Ok);
+                } else {
+                    set_notice("额度已刷新", Tone::Ok);
+                }
             } else {
                 set_notice(format!("{failed} 个账号刷新失败"), Tone::Bad);
             }

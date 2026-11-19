@@ -4,13 +4,13 @@
 
 # Wonton
 
-**轻量、原生的 Antigravity 多账号与额度管理工具**
+**专为 Antigravity 打造的进程级独立代理与多账号额度管理工具**
 
-在一个窗口内完成多账号管理、实时模型额度监控、账号凭证切换与进程级独立代理启动。  
+无需修改系统代理、无需安装虚拟网卡（TUN），在进程级为 Antigravity 注入独立 HTTP 代理并一键启动，同时在一个原生窗口内完成多账号管理、实时模型额度监控与账号凭证切换。  
 基于 **Rust + [NSH](https://github.com/longbridge/nsh)** 构建，纯原生渲染，无 JavaScript 运行时开销。
 
 <p>
-  <a href="https://github.com/Summe-rsnow/Wonton/releases"><img src="https://img.shields.io/badge/Version-v1.1.0-1a73e8?style=flat-square" alt="Version v1.1.0" /></a>
+  <a href="https://github.com/Summe-rsnow/Wonton/releases"><img src="https://img.shields.io/badge/Version-v1.1.1-1a73e8?style=flat-square" alt="Version v1.1.1" /></a>
   <img src="https://img.shields.io/badge/Rust-2024-orange?style=flat-square&logo=rust" alt="Rust 2024" />
   <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-0ea5e9?style=flat-square" alt="Platforms" />
   <img src="https://img.shields.io/badge/UI-NSH%20Native-6366f1?style=flat-square" alt="UI NSH Native" />
@@ -18,6 +18,7 @@
 </p>
 
 <p>
+  <a href="#-进程级独立代理">独立代理</a> ·
   <a href="#-界面预览">界面预览</a> ·
   <a href="#-核心特性">核心特性</a> ·
   <a href="#-快速开始">快速开始</a> ·
@@ -56,23 +57,32 @@
 
 ---
 
+## 🌐 进程级独立代理
+
+> **无需系统代理、无需虚拟网卡（TUN）** — 这是 Wonton 最核心的能力之一：让 Antigravity 稳定走指定代理的同时，完全不干扰本机其他软件的网络环境。
+
+- **解决核心痛点**：Antigravity 底层的 `language_server`（Go 编写）默认仅读取环境变量、忽略系统代理；而客户端界面层又需要浏览器代理参数且必须绕过 `localhost` / `127.0.0.1` 回环地址（否则界面白屏）。
+- **进程树精准注入**：通过 Wonton 启动 **Antigravity 经典版**、**Antigravity IDE** 或 **Antigravity CLI (`agy`)** 时，自动向该子进程树注入 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`（大小写双份）、`NO_PROXY` 及 `--proxy-server` / `--proxy-bypass-list` 参数。
+- **开箱即测即用**：主工具栏左侧即可开关 HTTP 代理、填写 `主机 : 端口`，并在输入框旁一键**测试代理连通性与延迟**、**保存代理配置**；关闭代理开关即可一键切回直连。
+- **全链路统一通道**：Wonton 自身的所有网络请求（OAuth 授权、刷新令牌、额度查询、更新检测）均统一走所配代理或直连，并复用连接池与 TLS 会话。
+
+---
+
 ## ✨ 核心特性
 
 - **📊 多账号额度一目了然**
   - 实时展示账号订阅等级（`ULTRA` / `PRO` / `FREE`）与各模型池（`Gemini`、`Claude / GPT`、`Gemini Argon`）的 **5 小时（5H）** 与 **周（周）** 剩余额度百分比、阈值告警色与重置倒计时。
   - 支持卡片**拖拽排序**与顺序持久化，内置 **跟随系统 / 浅色 / 深色** 三种外观模式。
-- **🔑 多种账号导入与导出**
+- **🔑 多种账号导入、导出与批量管理**
   - **网页授权**：在浏览器完成 Google OAuth 登录，通过本地回环端口自动接收回调并立即刷新额度。
-  - **手动 Token**：粘贴单个或多个 `refresh_token`（支持纯文本或 JSON 数组）。
+  - **手动 Token & JSON 导入**：粘贴单个或多个 `refresh_token`（支持纯文本或 JSON 数组），也可直接在弹窗内点击「导入账号 JSON」选择文件。
   - **本机导入**：直接读取本机已登录 Antigravity 客户端的 `state.vscdb`，解析 protobuf 自动提取 `refresh_token`（Windows）。
-  - **JSON 批量导入 / 导出**：兼容常见多账号 JSON 导出格式，导入时并发校验令牌并显示实时进度；支持单账号、勾选批量或全量导出。
-- **🌐 进程级独立 HTTP 代理与多端启动**
-  - 支持 `HTTP` 代理开关与主机端口持久化配置，内置一键**代理连通性与延迟测试**。
-  - 顶栏工具区集成 **Antigravity 经典版**、**Antigravity IDE**、**Antigravity CLI (`agy`)** 三个直达启动按钮；账号行支持一键**切换账号凭证并启动对应客户端**。
-  - 代理参数与环境变量仅作用于所启动的子进程树，**不修改系统代理、不安装虚拟网卡**；Wonton 自身的所有网络请求（OAuth、刷新令牌、额度查询、更新检测）均统一走所配代理或直连，并复用连接池与 TLS 会话。
+  - **选中即局部操作**：勾选账号后，工具栏的**导出**与**刷新**会自动切换为针对**已选账号**（未勾选时作用于全部账号），并支持工具栏一键**批量删除**（带二次确认）。
+- **🚀 多端凭证切换与启动**
+  - 工具栏右侧集成 **Antigravity 经典版**、**Antigravity IDE**、**Antigravity CLI (`agy`)** 三个直达启动按钮；账号行支持一键**刷新凭证并切换账号后启动对应客户端**（自动继承进程级代理设置）。
 - **🖥️ 原生桌面体验与版本更新**
   - 顶栏实时展示当前版本号，提供「关于」界面，支持一键检测 **GitHub Releases** 最新版本并直达发布页下载。
-  - 支持 Windows 系统托盘常驻与快捷菜单（显示窗口 / 全部刷新 / 关于与检查更新 / 关闭行为偏好设置）。
+  - 支持 Windows 系统托盘常驻与快捷菜单（显示窗口 / 刷新全部账号 / 关于与检查更新 / 关闭行为偏好设置）。
 
 ---
 

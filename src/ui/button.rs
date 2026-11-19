@@ -28,6 +28,8 @@ pub(crate) enum IconKind {
     Primary,
     /// Bordered toolbar icon button (30pt scale).
     Secondary,
+    /// Bordered destructive toolbar icon button (30pt scale).
+    ToolbarDanger,
     /// Bordered toolbar client launcher (30pt scale).
     ToolbarLaunch,
     /// Pill surface used for per-account client launchers (26pt compact row scale).
@@ -152,20 +154,20 @@ pub(crate) fn icon_action_disabled(
 }
 
 /// A non-text vector icon action with separate reactive tooltip text.
-pub(crate) fn icon_action_with_tip(
+pub(crate) fn icon_action_with_tip<M>(
     kind: IconKind,
     markup: &'static str,
-    a11y_label: &'static str,
+    a11y_label: impl nsh_core::element::IntoProp<Option<SharedString>, M>,
     tooltip_label: impl IntoReactive<SharedString>,
     disabled: impl Fn() -> bool + 'static,
     on_press: impl Fn() + 'static,
 ) -> impl IntoElement {
     let size = match kind {
-        IconKind::Primary | IconKind::Secondary | IconKind::ToolbarLaunch => 30.0,
+        IconKind::Primary | IconKind::Secondary | IconKind::ToolbarDanger | IconKind::ToolbarLaunch => 30.0,
         IconKind::Launch | IconKind::Subtle | IconKind::Danger => 26.0,
     };
     let icon_size = match kind {
-        IconKind::Primary | IconKind::Secondary | IconKind::ToolbarLaunch => 15.0,
+        IconKind::Primary | IconKind::Secondary | IconKind::ToolbarDanger | IconKind::ToolbarLaunch => 15.0,
         IconKind::Launch | IconKind::Subtle | IconKind::Danger => 14.0,
     };
     let base = button()
@@ -196,6 +198,13 @@ pub(crate) fn icon_action_with_tip(
             .hover(|s| s.bg(move || theme().accent).border_color(move || theme().ring))
             .active(|s| s.bg(move || theme().muted))
             .child(svg_icon(markup, icon_size, move || theme().foreground)),
+        IconKind::ToolbarDanger => base
+            .border_1()
+            .border_color(move || theme().border)
+            .bg(move || theme().background)
+            .hover(|s| s.bg(move || theme().accent).border_color(move || theme().destructive))
+            .active(|s| s.bg(move || theme().muted))
+            .child(svg_icon(markup, icon_size, move || theme().destructive)),
         IconKind::ToolbarLaunch | IconKind::Launch => base
             .border_1()
             .border_color(move || theme().border)

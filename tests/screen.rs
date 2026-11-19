@@ -24,15 +24,16 @@ fn start() -> Headless {
 #[test]
 fn shows_version_and_updated_toolbar_controls() {
     let app = start();
-    assert!(app.screen().shows("v1.1.0"));
+    assert!(app.screen().shows("v1.1.1"));
     for label in [
         "关于",
+        "测试",
+        "保存",
         "导入",
         "导出",
         "全部刷新",
+        "删除",
         "添加账号…",
-        "测试",
-        "保存",
         "启动反重力",
         "启动 Antigravity IDE",
         "启动 Antigravity CLI",
@@ -50,8 +51,13 @@ fn the_add_dialog_opens_on_oauth_without_enterprise_and_closes() {
     app.press("role:button[添加账号…]").unwrap();
     app.wait_for("网页授权").unwrap();
     assert!(!app.screen().shows("使用企业版（GCP）客户端"));
+    assert!(!app.screen().matches("role:button[导入账号 JSON]").unwrap());
     app.press("role:tab[手动 Token]").unwrap();
     app.wait_for_gone("打开授权页面", GONE).unwrap();
+    assert!(app.screen().matches("role:button[导入账号 JSON]").unwrap());
+    app.press("role:tab[本机导入]").unwrap();
+    app.wait_for("从本机导入").unwrap();
+    assert!(!app.screen().matches("role:button[导入账号 JSON]").unwrap());
     app.press("role:button[关闭]").unwrap();
     app.wait_for_gone("网页授权", GONE).unwrap();
     assert!(app.screen().shows("还没有账号"));
@@ -62,7 +68,7 @@ fn the_about_dialog_shows_version_links_and_update_check() {
     let mut app = start();
     app.press("role:button[关于]").unwrap();
     app.wait_for("版本更新").unwrap();
-    assert!(app.screen().shows("v1.1.0"));
+    assert!(app.screen().shows("v1.1.1"));
     assert!(app.screen().shows("Apache-2.0"));
     assert!(app.screen().matches("role:button[检测更新]").unwrap());
     assert!(app.screen().matches("role:link[Summe-rsnow/Wonton]").unwrap());

@@ -159,12 +159,22 @@ fn token_panel(tokens: Signal<String>) -> impl IntoElement {
                 .focus(|s: StyleRefinement| s.border_color(move || theme().ring)),
         )
         .child(
-            view().flex_row().child(action_disabled(
-                ButtonKind::Primary,
-                move || if store::busy() { "正在添加…" } else { "添加" },
-                move || store::busy() || tokens.with(|text| text.trim().is_empty()),
-                move || store::add_tokens(tokens.get_untracked()),
-            )),
+            view()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .child(action_disabled(
+                    ButtonKind::Primary,
+                    move || if store::busy() { "正在添加…" } else { "添加" },
+                    move || store::busy() || tokens.with(|text| text.trim().is_empty()),
+                    move || store::add_tokens(tokens.get_untracked()),
+                ))
+                .child(action_disabled(
+                    ButtonKind::Secondary,
+                    "导入账号 JSON",
+                    store::busy,
+                    store::import_accounts_action,
+                )),
         )
 }
 

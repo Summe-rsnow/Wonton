@@ -10,19 +10,41 @@ use crate::ui::{
     action, checkbox, modal_dialog, progress_bar, progress_modal_dialog, radio_option, ButtonKind,
 };
 
-pub(crate) fn confirm_delete_dialog(pending_delete: Signal<Option<u32>>) -> impl IntoElement {
-    let email = move || {
-        pending_delete
-            .get()
-            .and_then(store::account_by_id)
-            .map(|account| account.email)
-            .unwrap_or_default()
+pub(crate) fn confirm_delete_dialog(pending_delete: Signal<Option<Vec<u32>>>) -> impl IntoElement {
+    let title = move || {
+        let count = pending_delete.with(|ids| ids.as_ref().map_or(0, Vec::len));
+        if count > 1 {
+            format!("确认删除 {count} 个账号")
+        } else {
+            "确认删除账号".to_owned()
+        }
+    };
+    let description = move || {
+        let ids = pending_delete.get().unwrap_or_default();
+        if ids.len() <= 1 {
+            let addr = ids
+                .first()
+                .copied()
+                .and_then(store::account_by_id)
+                .map(|account| account.email)
+                .unwrap_or_default();
+            if addr.is_empty() {
+                "删除后将从本地列表移除，需重新授权或导入才能恢复。".to_owned()
+            } else {
+                format!("将从列表移除 {addr}，仅删除本地记录，需重新导入才能恢复。")
+            }
+        } else {
+            format!(
+                "将从列表移除已选的 {} 个账号，仅删除本地记录，需重新导入才能恢复。",
+                ids.len()
+            )
+        }
     };
     let close = move || pending_delete.set(None);
     let confirm = move || {
-        if let Some(id) = pending_delete.get_untracked() {
+        if let Some(ids) = pending_delete.get_untracked() {
             pending_delete.set(None);
-            store::remove_account(id);
+            store::remove_accounts(&ids);
         }
     };
 
@@ -35,24 +57,15 @@ pub(crate) fn confirm_delete_dialog(pending_delete: Signal<Option<u32>>) -> impl
                 view()
                     .gap_1()
                     .child(
-                        text("确认删除账号")
+                        text(title)
                             .text_base()
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(move || theme().foreground),
                     )
                     .child(
-                        text(move || {
-                            let addr = email();
-                            if addr.is_empty() {
-                                "删除后将从本地列表移除，需重新授权或导入才能恢复。".to_owned()
-                            } else {
-                                format!(
-                                    "将从列表移除 {addr}，仅删除本地记录，需重新导入才能恢复。"
-                                )
-                            }
-                        })
-                        .text_xs()
-                        .text_color(move || theme().muted_foreground),
+                        text(description)
+                            .text_xs()
+                            .text_color(move || theme().muted_foreground),
                     ),
             )
             .child(

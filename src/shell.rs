@@ -27,7 +27,7 @@ use crate::ui::{
 pub(crate) fn Screen() -> impl IntoElement {
     let add_dialog_open = signal(false);
     let about_dialog_open = signal(false);
-    let pending_delete: Signal<Option<u32>> = signal(None);
+    let pending_delete: Signal<Option<Vec<u32>>> = signal(None);
     let close_prompt_open = signal(false);
     let saved = store::proxy();
     let host = signal(saved.host.clone());
@@ -119,7 +119,7 @@ pub(crate) fn Screen() -> impl IntoElement {
         .bg(move || theme().background)
         .text_color(move || theme().foreground)
         .child(header(about_dialog_open))
-        .child(proxy_bar(host, port, add_dialog_open))
+        .child(proxy_bar(host, port, add_dialog_open, pending_delete))
         .child(accounts(clock, pending_delete))
         .child(when(
             move || {
@@ -276,6 +276,7 @@ fn proxy_bar(
     host: Signal<String>,
     port: Signal<String>,
     add_dialog_open: Signal<bool>,
+    pending_delete: Signal<Option<Vec<u32>>>,
 ) -> impl IntoElement {
     let build_config = move || ProxyConfig {
         enabled: store::proxy().enabled,
@@ -332,6 +333,34 @@ fn proxy_bar(
                         .w(px(64.0)),
                 ),
         )
+        .child(
+            view()
+                .flex_row()
+                .items_center()
+                .gap(px(4.0))
+                .child(icon_action_with_tip(
+                    IconKind::Secondary,
+                    icons::ACTIVITY,
+                    "测试",
+                    move || {
+                        if store::proxy_testing() {
+                            "正在测试代理…"
+                        } else {
+                            "测试代理连通性"
+                        }
+                    },
+                    store::proxy_testing,
+                    test_proxy,
+                ))
+                .child(icon_action_with_tip(
+                    IconKind::Secondary,
+                    icons::SAVE,
+                    "保存",
+                    "保存代理设置",
+                    || false,
+                    save,
+                )),
+        )
         .child(view().flex_1())
         .child(
             view()
@@ -370,16 +399,47 @@ fn proxy_bar(
                 .child(icon_action_with_tip(
                     IconKind::Secondary,
                     icons::REFRESH,
-                    "全部刷新",
+                    move || {
+                        if store::selected_count() > 0 {
+                            SharedString::from("刷新选中账号")
+                        } else {
+                            SharedString::from("全部刷新")
+                        }
+                    },
                     move || {
                         if store::busy() {
-                            "正在刷新…"
+                            "正在刷新…".to_owned()
                         } else {
-                            "刷新全部账号"
+                            let count = store::selected_count();
+                            if count > 0 {
+                                format!("刷新已选 {count} 个账号")
+                            } else {
+                                "刷新全部账号".to_owned()
+                            }
                         }
                     },
                     store::busy,
-                    store::refresh_all,
+                    store::refresh_selected_or_all,
+                ))
+                .child(icon_action_with_tip(
+                    IconKind::ToolbarDanger,
+                    icons::TRASH,
+                    "删除",
+                    move || {
+                        let count = store::selected_count();
+                        if count > 0 {
+                            format!("删除已选 {count} 个账号")
+                        } else {
+                            "删除已选账号（请先勾选）".to_owned()
+                        }
+                    },
+                    move || store::selected_count() == 0 || store::busy(),
+                    move || {
+                        let ids = store::selected_account_ids();
+                        if !ids.is_empty() {
+                            pending_delete.set(Some(ids));
+                        }
+                    },
                 ))
                 .child(icon_action(
                     IconKind::Primary,
@@ -389,29 +449,6 @@ fn proxy_bar(
                         store::clear_notice();
                         add_dialog_open.set(true);
                     },
-                ))
-                .child(toolbar_separator())
-                .child(icon_action_with_tip(
-                    IconKind::Secondary,
-                    icons::ACTIVITY,
-                    "测试",
-                    move || {
-                        if store::proxy_testing() {
-                            "正在测试代理…"
-                        } else {
-                            "测试代理连通性"
-                        }
-                    },
-                    store::proxy_testing,
-                    test_proxy,
-                ))
-                .child(icon_action_with_tip(
-                    IconKind::Secondary,
-                    icons::SAVE,
-                    "保存",
-                    "保存代理设置",
-                    || false,
-                    save,
                 ))
                 .child(toolbar_separator())
                 .child(icon_action_with_tip(
@@ -461,7 +498,7 @@ fn notice_overlay() -> impl IntoElement {
         ))
 }
 
-fn accounts(clock: Signal<i64>, pending_delete: Signal<Option<u32>>) -> impl IntoElement {
+fn accounts(clock: Signal<i64>, pending_delete: Signal<Option<Vec<u32>>>) -> impl IntoElement {
     let drag = DragList::new();
 
     view()
@@ -516,7 +553,7 @@ fn selection_bar() -> impl IntoElement {
                 let selected = store::selected_count();
                 let total = store::account_count();
                 if selected > 0 {
-                    format!("已选 {selected}/{total} 个（导出仅含所选）")
+                    format!("已选 {selected}/{total} 个（导出 / 刷新 / 删除仅含所选）")
                 } else if total >= 2 {
                     format!("共 {total} 个 · 拖拽排序")
                 } else {
@@ -539,7 +576,7 @@ fn account_card(
     id: u32,
     clock: Signal<i64>,
     drag: DragList,
-    pending_delete: Signal<Option<u32>>,
+    pending_delete: Signal<Option<Vec<u32>>>,
 ) -> impl IntoElement {
     let offset_y = animated_value(0.0);
     drag.register_motion(id, offset_y);
@@ -732,7 +769,7 @@ fn account_card(
                             IconKind::Danger,
                             icons::TRASH,
                             "删除这个账号",
-                            move || pending_delete.set(Some(id)),
+                            move || pending_delete.set(Some(vec![id])),
                         )),
                 ),
         )
@@ -785,4 +822,73 @@ fn client_launch_buttons(id: u32) -> Vec<AnyElement> {
             .into_element()
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use nsh_core::platform::{Idiom, Os};
+    use nsh_core::prelude::{px, size};
+    use nsh_core::time::unix_ms;
+    use nsh_engine::{EngineConfig, Root};
+    use nsh_testing::{Headless, MemoryStorage};
+
+    use crate::google::{AccountTier, ModelQuota};
+    use crate::store::{seed_storage_entry_for_test, ThemeMode};
+
+    const GONE: Duration = Duration::from_secs(5);
+
+    #[test]
+    fn selecting_accounts_updates_refresh_button_and_allows_batch_delete() {
+        let now = unix_ms() as i64;
+        let sample_models = || {
+            vec![ModelQuota {
+                name: "Gemini".to_owned(),
+                remaining: 0.9,
+                reset: None,
+                weekly_remaining: Some(0.95),
+                weekly_reset: None,
+                is_weekly_only: false,
+            }]
+        };
+        let entry = seed_storage_entry_for_test(
+            vec![
+                ("a@b.c", AccountTier::Ultra, sample_models(), Some(now)),
+                ("d@e.f", AccountTier::Pro, sample_models(), Some(now)),
+                ("g@h.i", AccountTier::Free, sample_models(), Some(now)),
+            ],
+            ThemeMode::Light,
+        );
+
+        let mut config = EngineConfig::new(Root::of::<crate::App>());
+        config.viewport = size(px(860.0), px(640.0));
+        config.environment.os = Os::Windows;
+        config.environment.idiom = Idiom::Desktop;
+        config.storage = Some(MemoryStorage::new([entry]));
+        let mut app = Headless::start(config).unwrap();
+
+        app.wait_for("a@b.c").unwrap();
+        assert!(app.screen().matches("role:button[全部刷新]").unwrap());
+        assert!(!app.screen().matches("role:button[刷新选中账号]").unwrap());
+
+        // Select two accounts -> refresh button becomes selection-scoped and delete opens multi-delete dialog.
+        app.press("role:checkbox[选择 a@b.c]").unwrap();
+        app.wait_for("已选 1/3 个（导出 / 刷新 / 删除仅含所选）").unwrap();
+        assert!(app.screen().matches("role:button[刷新选中账号]").unwrap());
+        assert!(!app.screen().matches("role:button[全部刷新]").unwrap());
+
+        app.press("role:checkbox[选择 d@e.f]").unwrap();
+        app.wait_for("已选 2/3 个（导出 / 刷新 / 删除仅含所选）").unwrap();
+
+        app.press("role:button[删除]").unwrap();
+        app.wait_for("确认删除 2 个账号").unwrap();
+        app.press("role:button[确认删除]").unwrap();
+        app.wait_for_gone("确认删除 2 个账号", GONE).unwrap();
+
+        assert!(!app.screen().shows("a@b.c"));
+        assert!(!app.screen().shows("d@e.f"));
+        assert!(app.screen().shows("g@h.i"));
+        assert!(app.screen().matches("role:button[全部刷新]").unwrap());
+    }
 }

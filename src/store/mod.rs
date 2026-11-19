@@ -7,7 +7,7 @@ mod actions;
 pub(crate) use actions::{
     add_account_by_oauth, add_tokens, check_for_updates_action, export_accounts_action,
     import_accounts_action, import_local, launch_account_target, launch_target_app,
-    refresh_account_now, refresh_all, test_proxy_action,
+    refresh_account_now, refresh_all, refresh_selected_or_all, test_proxy_action,
 };
 
 use nsh_core::prelude::*;
@@ -573,6 +573,20 @@ pub(crate) fn clear_selection() {
     state().update(|state| state.selected_ids.clear());
 }
 
+/// Selected account ids in their current list order.
+pub(crate) fn selected_account_ids() -> Vec<u32> {
+    state().with(filter_selected_account_ids)
+}
+
+fn filter_selected_account_ids(state: &State) -> Vec<u32> {
+    state
+        .accounts
+        .iter()
+        .filter(|account| state.selected_ids.contains(&account.id))
+        .map(|account| account.id)
+        .collect()
+}
+
 /// Accounts formatted for export: a single id, selected ids, or all accounts when none selected.
 pub(crate) fn export_items(single_id: Option<u32>) -> Vec<google::ExportAccount> {
     state().with(|state| select_export_items(state, single_id))
@@ -609,14 +623,33 @@ pub(crate) fn set_proxy(proxy: ProxyConfig) {
     save();
 }
 
-/// Removes an account, and says so, since the row simply disappears.
-pub(crate) fn remove_account(id: u32) {
+/// Removes one or more accounts, and says so, since the rows simply disappear.
+pub(crate) fn remove_accounts(ids: &[u32]) {
+    if ids.is_empty() {
+        return;
+    }
+    let mut removed = 0usize;
     state().update(|state| {
-        state.accounts.retain(|account| account.id != id);
-        state.selected_ids.retain(|&selected| selected != id);
+        removed = remove_accounts_from_state(state, ids);
     });
+    if removed == 0 {
+        return;
+    }
     save();
-    set_notice("已删除账号", Tone::Info);
+    if removed == 1 {
+        set_notice("已删除账号", Tone::Info);
+    } else {
+        set_notice(format!("已删除 {removed} 个账号"), Tone::Info);
+    }
+}
+
+fn remove_accounts_from_state(state: &mut State, ids: &[u32]) -> usize {
+    let before = state.accounts.len();
+    state.accounts.retain(|account| !ids.contains(&account.id));
+    state
+        .selected_ids
+        .retain(|selected| !ids.contains(selected) && state.accounts.iter().any(|a| a.id == *selected));
+    before.saturating_sub(state.accounts.len())
 }
 
 /// Moves account `id` to `to_index` cleanly and persists the new order.
@@ -888,4 +921,56 @@ mod tests {
         assert_eq!(decode_storage(&encoded), Some(json.to_owned()));
         assert_eq!(decode_storage(json), None);
     }
+
+    #[test]
+    fn selected_account_ids_and_batch_remove_preserve_order_and_clean_selection() {
+        let make = |id: u32, email: &str| Account {
+            id,
+            email: email.to_owned(),
+            refresh_token: format!("1//{id}"),
+            tier: None,
+            models: Vec::new(),
+            fetched_at: None,
+            error: None,
+            needs_login: false,
+            access_token: None,
+            expires_at: 0,
+        };
+        let mut state = State {
+            accounts: vec![make(1, "a@b.c"), make(2, "d@e.f"), make(3, "g@h.i")],
+            next_id: 4,
+            selected_ids: vec![3, 999, 1],
+            ..State::default()
+        };
+        assert_eq!(filter_selected_account_ids(&state), vec![1, 3]);
+        assert_eq!(remove_accounts_from_state(&mut state, &[1, 3]), 2);
+        assert_eq!(state.accounts.iter().map(|a| a.id).collect::<Vec<_>>(), vec![2]);
+        assert!(state.selected_ids.is_empty());
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn seed_storage_entry_for_test(
+    accounts: Vec<(&str, AccountTier, Vec<ModelQuota>, Option<i64>)>,
+    theme: ThemeMode,
+) -> (String, String) {
+    let saved = Saved {
+        accounts: accounts
+            .into_iter()
+            .enumerate()
+            .map(|(idx, (email, tier, models, fetched_at))| SavedAccount {
+                email: email.to_owned(),
+                refresh_token: format!("1//demo_{idx}"),
+                tier: Some(tier),
+                models,
+                fetched_at,
+            })
+            .collect(),
+        proxy: SavedProxy::default(),
+        theme,
+        close_behavior: CloseBehavior::Ask,
+    };
+    let json = serde_json::to_string(&saved).expect("saved json");
+    let encoded = encode_storage(&json).expect("encoded");
+    (STORAGE_KEY.to_owned(), encoded)
 }
