@@ -55,6 +55,9 @@ Reduced motion: every motion below lands instantly (`reduce_motion()` is honored
 | Quota bar value updates | width transition `base`, ease-in-out |
 | Account row appears after add | rise 8pt and fade in, `slow` |
 | Account row removed | none (unmounted); the list closes the gap instantly |
+| About dialog opens | `FadeInUp` (`motion().entering(MotionPreset::FadeInUp)`), `slow`, ease-out |
+| About dialog closes | none (native dismissal), content unmounted |
+| Update check state changes | button disables with `"正在检测…"`, status text updates in place |
 | Tab content switch (网页授权 / 手动 Token / 本机导入) | instant swap; the panels are small and adjacent |
 | Notice text appears (saved / started / error) | floating bottom toast, fade in `instant`, auto-dismisses after 3s (6s for errors) |
 | Quota refreshing | the row's timestamp text changes; no spinner (the fetch is fast and the row keeps its data) |
@@ -67,8 +70,8 @@ Reduced motion: every motion below lands instantly (`reduce_motion()` is honored
 ## The `ui` layer
 
 `src/ui/`: `icons` (24×24 stroke vector SVG icon definitions plus `assets/logo-mark.svg` and `assets/tray-icon.png`), `button` (`ButtonKind`
-primary / secondary / ghost / destructive, `IconKind` primary / secondary / launch /
-subtle / danger, `hint_tooltip`, `icon_action`, `icon_action_disabled`,
+primary / secondary / ghost / destructive, `IconKind` primary / secondary / toolbar_launch / launch /
+subtle / danger, `external_link`, `hint_tooltip`, `icon_action`, `icon_action_disabled`,
 `icon_action_with_tip`, and `segmented_icon`),
 `input` (text field, checkbox, shared vertically centered `toggle_switch`, and `radio_option`), `surface` (card, divider,
 empty state, status badge, tier badge, notice toast), `quota` (single-row pool bar
@@ -78,4 +81,4 @@ indicator style. Features compose these and never style a control themselves.
 
 ## Layout
 
-One workspace: an immersive window header integrated into the hidden system title bar (`48pt`, draggable via `window_drag`, reserving `title_bar().left`/`right` for native window controls; brand mark `assets/logo-mark.svg` + title + 3-mode icon appearance switcher `跟随系统`/`浅色模式`/`深色模式` + non-text icon toolbar for import, export, refresh-all, and add-account), a compact single-row HTTP proxy bar (enable/disable toggle switch, host, port, and non-text icon buttons for test, save, and launch), a fixed-height (`34pt`) selection summary bar, then the draggable compact account list (each row with a vector drag grip, selection checkbox, subscription tier badge `ULTRA` / `PRO` / `FREE` / `ENTERPRISE`, the three quota pools ordered `Gemini` → `Claude [4.6/5.5] / GPT` → `Gemini Argon` (`周` only at bottom, when eligible) showing `5H` and `周` side by side on one row with concise durations like `4小时38分` / `6天23小时`, and non-text vector icon actions for Classic / IDE / CLI client launch, export, refresh, and delete — which opens a two-step confirmation dialog — all with hover tooltips), which is the page's main region and the only scroller. Desktop system tray (`assets/tray-icon.png`) restores/focuses on click and exposes show, refresh-all, close-button preference (`每次询问` / `最小化到托盘` / `直接退出应用`), and quit; pressing close with `每次询问` opens the close modal with a `不再提示` checkbox. Notices float at the bottom via `notice_toast` without shifting layout. Minimum window 720×560; the proxy bar wraps below 760pt.
+One workspace: an immersive window header integrated into the hidden system title bar (`48pt`, draggable via `window_drag`, reserving `title_bar().left`/`right` for native window controls; brand mark `assets/logo-mark.svg` + title + version badge `vX.Y.Z` + subtitle + 3-mode icon appearance switcher `跟随系统`/`浅色模式`/`深色模式` + About/Update icon button), a compact HTTP proxy & action toolbar (enable/disable toggle switch, host, port on the left; non-text icon buttons on the right ordered as import, export, refresh-all, add-account | test proxy, save proxy | launch Classic, launch IDE, launch CLI), a fixed-height (`34pt`) selection summary bar, then the draggable compact account list (each row with a vector drag grip, selection checkbox, subscription tier badge `ULTRA` / `PRO` / `FREE`, the three quota pools ordered `Gemini` → `Claude [4.6/5.5] / GPT` → `Gemini Argon` (`周` only at bottom, when eligible) showing `5H` and `周` side by side on one row with concise durations like `4小时38分` / `6天23小时`, and non-text vector icon actions for Classic / IDE / CLI client launch, export, refresh, and delete — which opens a two-step confirmation dialog — all with hover tooltips), which is the page's main region and the only scroller. Desktop system tray (`assets/tray-icon.png`) restores/focuses on click and exposes show, refresh-all, about, close-button preference (`每次询问` / `最小化到托盘` / `直接退出应用`), and quit; pressing close with `每次询问` opens the close modal with a `不再提示` checkbox. Notices float at the bottom via `notice_toast` without shifting layout. Minimum window 720×560; the toolbar wraps cleanly on narrower viewports.

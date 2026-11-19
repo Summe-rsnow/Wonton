@@ -225,12 +225,27 @@ fn home_dir() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-/// Starts Classic Antigravity with `proxy` without altering account credentials.
-pub fn launch(proxy: &ProxyConfig) -> Result<u32, String> {
+/// Starts the specified Antigravity client (`Classic`, `Ide`, or `Cli`) behind
+/// `proxy` without altering account credentials.
+pub fn launch_target(target: LaunchTarget, proxy: &ProxyConfig) -> Result<u32, String> {
     proxy.validate()?;
-    let target = detect_target_for(LaunchTarget::Classic)
-        .ok_or_else(|| "没有找到 Antigravity.exe，请确认已安装或已改到默认目录".to_owned())?;
-    spawn_gui(&target, proxy)
+    match target {
+        LaunchTarget::Classic => {
+            let exe = detect_target_for(LaunchTarget::Classic)
+                .ok_or_else(|| "没有找到 Antigravity.exe，请确认已安装或已改到默认目录".to_owned())?;
+            spawn_gui(&exe, proxy)
+        }
+        LaunchTarget::Ide => {
+            let exe = detect_target_for(LaunchTarget::Ide)
+                .ok_or_else(|| "没有找到 Antigravity IDE，请确认已安装".to_owned())?;
+            spawn_gui(&exe, proxy)
+        }
+        LaunchTarget::Cli => {
+            let exe = detect_target_for(LaunchTarget::Cli)
+                .ok_or_else(|| "没有找到 agy.exe，请确认已安装 Antigravity CLI".to_owned())?;
+            spawn_cli_console(&exe, proxy)
+        }
+    }
 }
 
 /// Writes `creds` for `target`, closes any stale GUI instance of `target`,

@@ -11,29 +11,10 @@ use nsh_core::prelude::*;
 use crate::launch::ProxyConfig;
 use serde_json::Value;
 
-/// Which Google OAuth client issues the token. A refresh token only works
-/// with the client that issued it, so the account remembers this.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
-pub enum ClientKind {
-    #[default]
-    Personal,
-    Enterprise,
-}
-
-impl ClientKind {
-    fn client(self) -> (&'static str, &'static str) {
-        match self {
-            Self::Personal => (
-                "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com",
-                "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",
-            ),
-            Self::Enterprise => (
-                "884354919052-36trc1jjb3tguiac32ov6cod268c5blh.apps.googleusercontent.com",
-                "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",
-            ),
-        }
-    }
-}
+/// The Antigravity Google OAuth client credentials.
+const OAUTH_CLIENT_ID: &str =
+    "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com";
+const OAUTH_CLIENT_SECRET: &str = "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";
 
 const AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
@@ -87,7 +68,6 @@ pub enum AccountTier {
     Free,
     Pro,
     Ultra,
-    Enterprise,
 }
 
 impl AccountTier {
@@ -95,7 +75,6 @@ impl AccountTier {
         match self {
             Self::Ultra => "ULTRA",
             Self::Pro => "PRO",
-            Self::Enterprise => "ENTERPRISE",
             Self::Free => "FREE",
         }
     }
@@ -140,10 +119,9 @@ pub struct ImportEntry {
 }
 
 /// The authorization URL a browser opens.
-pub fn auth_url(kind: ClientKind, redirect_uri: &str, state: &str) -> String {
-    let (client_id, _) = kind.client();
+pub fn auth_url(redirect_uri: &str, state: &str) -> String {
     let query = [
-        ("client_id", client_id),
+        ("client_id", OAUTH_CLIENT_ID),
         ("redirect_uri", redirect_uri),
         ("response_type", "code"),
         ("scope", SCOPES),
@@ -699,13 +677,11 @@ pub fn parse_email(body: &str) -> Result<String, String> {
 pub async fn exchange_code(
     code: &str,
     redirect_uri: &str,
-    kind: ClientKind,
     proxy: ProxyConfig,
 ) -> Result<Tokens, String> {
-    let (client_id, client_secret) = kind.client();
     let body = [
-        ("client_id", client_id),
-        ("client_secret", client_secret),
+        ("client_id", OAUTH_CLIENT_ID),
+        ("client_secret", OAUTH_CLIENT_SECRET),
         ("code", code),
         ("redirect_uri", redirect_uri),
         ("grant_type", "authorization_code"),
@@ -735,13 +711,11 @@ pub async fn exchange_code(
 /// Renews an access token from the account's refresh token.
 pub async fn refresh(
     refresh_token: &str,
-    kind: ClientKind,
     proxy: ProxyConfig,
 ) -> Result<Tokens, String> {
-    let (client_id, client_secret) = kind.client();
     let body = [
-        ("client_id", client_id),
-        ("client_secret", client_secret),
+        ("client_id", OAUTH_CLIENT_ID),
+        ("client_secret", OAUTH_CLIENT_SECRET),
         ("refresh_token", refresh_token),
         ("grant_type", "refresh_token"),
     ]
@@ -756,48 +730,17 @@ pub async fn refresh(
     parse_tokens_body(&text)
 }
 
-/// Whether `error` indicates a Google OAuth client mismatch that another
-/// client id may accept.
-fn should_fallback_client(error: &str) -> bool {
-    error.contains("unauthorized_client")
-        || error.contains("invalid_client")
-        || error.contains("HTTP 401")
-        || error.contains("HTTP 403")
-}
-
-async fn refresh_with_rate_retry(
+/// Renews a refresh token, retrying once after a short backoff on HTTP 429.
+pub async fn refresh_with_rate_retry(
     refresh_token: &str,
-    kind: ClientKind,
     proxy: ProxyConfig,
 ) -> Result<Tokens, String> {
-    match refresh(refresh_token, kind, proxy.clone()).await {
+    match refresh(refresh_token, proxy.clone()).await {
         Err(error) if error.contains("HTTP 429") || error.contains("RESOURCE_EXHAUSTED") => {
             timer(Duration::from_millis(1500)).await;
-            refresh(refresh_token, kind, proxy).await
+            refresh(refresh_token, proxy).await
         }
         other => other,
-    }
-}
-
-/// Renews a refresh token, falling back between Personal and Enterprise clients
-/// when Google rejects the first client as unauthorized for that token.
-pub async fn refresh_with_fallback(
-    refresh_token: &str,
-    preferred: Option<ClientKind>,
-    proxy: ProxyConfig,
-) -> Result<(Tokens, ClientKind), String> {
-    let first = preferred.unwrap_or(ClientKind::Personal);
-    let second = match first {
-        ClientKind::Personal => ClientKind::Enterprise,
-        ClientKind::Enterprise => ClientKind::Personal,
-    };
-    match refresh_with_rate_retry(refresh_token, first, proxy.clone()).await {
-        Ok(tokens) => Ok((tokens, first)),
-        Err(error) if should_fallback_client(&error) => {
-            let tokens = refresh_with_rate_retry(refresh_token, second, proxy).await?;
-            Ok((tokens, second))
-        }
-        Err(error) => Err(error),
     }
 }
 
@@ -817,17 +760,8 @@ pub fn normalize_tier(raw: &str) -> AccountTier {
     let lower = raw.trim().to_lowercase();
     if lower.contains("ultra") || lower.contains("helium") {
         AccountTier::Ultra
-    } else if lower.contains("free") || lower.contains("starter") {
-        AccountTier::Free
     } else if lower.contains("pro") || lower.contains("premium") || lower.contains("advanced") {
         AccountTier::Pro
-    } else if lower.contains("enterprise")
-        || lower.contains("standard")
-        || lower.contains("business")
-        || lower.starts_with("gcp_")
-        || lower.contains("vertex")
-    {
-        AccountTier::Enterprise
     } else {
         AccountTier::Free
     }
@@ -1110,14 +1044,10 @@ pub fn build_account_quotas(
     models_body: &str,
     groups: Option<&[SummaryGroup]>,
     detected_tier: Option<AccountTier>,
-    kind: ClientKind,
 ) -> Result<AccountQuotaSnapshot, String> {
     let catalog = parse_models_catalog(models_body, true)?;
 
-    let effective_tier = match kind {
-        ClientKind::Enterprise => Some(AccountTier::Enterprise),
-        ClientKind::Personal => detected_tier,
-    };
+    let effective_tier = detected_tier;
 
     let mut primary: [Vec<ModelQuota>; 3] = Default::default();
     let mut fallback: [Vec<ModelQuota>; 3] = Default::default();
@@ -1178,13 +1108,11 @@ pub fn build_account_quotas(
     let allow_ultra = matches!(effective_tier, Some(AccountTier::Ultra));
     let is_free = effective_tier == Some(AccountTier::Free);
     let has_argon = !catalog.argon_explicitly_disabled
-        && (matches!(
-            effective_tier,
-            Some(AccountTier::Ultra | AccountTier::Enterprise)
-        ) || match groups {
-            Some(g) => g.iter().any(is_argon_group),
-            None => !primary[QuotaBucket::Argon as usize].is_empty(),
-        });
+        && (allow_ultra
+            || match groups {
+                Some(g) => g.iter().any(is_argon_group),
+                None => !primary[QuotaBucket::Argon as usize].is_empty(),
+            });
 
     let claude_names = if !claude_primary_names.is_empty() {
         &claude_primary_names
@@ -1284,30 +1212,28 @@ pub fn build_account_quotas(
     Ok(AccountQuotaSnapshot { tier: effective_tier, models: out })
 }
 
-/// Calls a Cloud Code internal endpoint in `QUOTA_HOSTS` order.
-async fn post_cloudcode(
+/// Calls a Cloud Code internal endpoint synchronously in `QUOTA_HOSTS` order.
+fn post_cloudcode_sync(
     path: &str,
     access_token: &str,
-    body: String,
-    proxy: ProxyConfig,
+    body: &str,
+    proxy: &ProxyConfig,
 ) -> Result<String, String> {
-    let authorization = format!("Bearer {access_token}");
     let headers = [
-        ("Authorization", authorization.as_str()),
-        ("Content-Type", "application/json"),
-        ("User-Agent", HUB_USER_AGENT),
+        ("Authorization".to_owned(), format!("Bearer {access_token}")),
+        ("Content-Type".to_owned(), "application/json".to_owned()),
+        ("User-Agent".to_owned(), HUB_USER_AGENT.to_owned()),
     ];
     let mut last_error = String::new();
     for host in QUOTA_HOSTS {
         let url = format!("{host}{path}");
-        let (status, text) =
-            match send("POST", url, &headers, Some(body.clone()), proxy.clone()).await {
-                Ok(response) => response,
-                Err(error) => {
-                    last_error = error;
-                    continue;
-                }
-            };
+        let (status, text) = match request("POST", &url, &headers, Some(body), proxy) {
+            Ok(response) => response,
+            Err(error) => {
+                last_error = error;
+                continue;
+            }
+        };
         if !(200..300).contains(&status) {
             last_error = format!("HTTP {status}");
             continue;
@@ -1325,54 +1251,61 @@ async fn post_cloudcode(
 /// (`retrieveUserQuotaSummary`), and model quotas (`fetchAvailableModels`).
 pub async fn quota(
     access_token: &str,
-    kind: ClientKind,
     proxy: ProxyConfig,
 ) -> Result<AccountQuotaSnapshot, String> {
-    let (project_id, detected_tier) = match post_cloudcode(
-        "/v1internal:loadCodeAssist",
-        access_token,
-        r#"{"metadata":{"ideType":"ANTIGRAVITY"}}"#.to_owned(),
-        proxy.clone(),
-    )
+    let token = access_token.to_owned();
+    blocking(move || {
+        let (project_id, detected_tier) = match post_cloudcode_sync(
+            "/v1internal:loadCodeAssist",
+            &token,
+            r#"{"metadata":{"ideType":"ANTIGRAVITY"}}"#,
+            &proxy,
+        ) {
+            Ok(text) => parse_code_assist(&text),
+            Err(_) => (None, None),
+        };
+
+        let summary_payload = match project_id {
+            Some(ref pid) => serde_json::json!({ "project": pid }).to_string(),
+            None => "{}".to_owned(),
+        };
+
+        // Run grouped summary and available-models queries concurrently once project_id is known.
+        let (summary_res, models_res) = std::thread::scope(|scope| {
+            let summary_handle = scope.spawn(|| {
+                post_cloudcode_sync(
+                    "/v1internal:retrieveUserQuotaSummary",
+                    &token,
+                    &summary_payload,
+                    &proxy,
+                )
+            });
+            let models_res = post_cloudcode_sync(
+                "/v1internal:fetchAvailableModels",
+                &token,
+                &summary_payload,
+                &proxy,
+            );
+            let summary_res = summary_handle
+                .join()
+                .map_err(|_| "retrieveUserQuotaSummary worker panicked".to_owned())
+                .and_then(|res| res);
+            (summary_res, models_res)
+        });
+
+        let summary_groups = match summary_res {
+            Ok(text) => Some(parse_quota_summary(&text)),
+            Err(error) => {
+                log::warn!("retrieveUserQuotaSummary failed: {error}");
+                None
+            }
+        };
+        let models_body = models_res?;
+
+        build_account_quotas(&models_body, summary_groups.as_deref(), detected_tier)
+    })
     .await
-    {
-        Ok(text) => parse_code_assist(&text),
-        Err(_) => (None, None),
-    };
-
-    let summary_payload = match project_id {
-        Some(ref pid) => serde_json::json!({ "project": pid }).to_string(),
-        None => "{}".to_owned(),
-    };
-    let summary_groups = match post_cloudcode(
-        "/v1internal:retrieveUserQuotaSummary",
-        access_token,
-        summary_payload.clone(),
-        proxy.clone(),
-    )
-    .await
-    {
-        Ok(text) => Some(parse_quota_summary(&text)),
-        Err(error) => {
-            log::warn!("retrieveUserQuotaSummary failed: {error}");
-            None
-        }
-    };
-
-    let models_body = post_cloudcode(
-        "/v1internal:fetchAvailableModels",
-        access_token,
-        summary_payload,
-        proxy,
-    )
-    .await?;
-
-    build_account_quotas(
-        &models_body,
-        summary_groups.as_deref(),
-        detected_tier,
-        kind,
-    )
+    .map_err(|error| error.to_string())?
 }
 
 /// The form headers every token request sends.
@@ -1380,6 +1313,15 @@ const FORM_HEADERS: &[(&str, &str)] = &[
     ("Content-Type", "application/x-www-form-urlencoded"),
     ("User-Agent", USER_AGENT),
 ];
+
+/// Performs an HTTP GET request through the configured proxy (or directly when disabled).
+pub(crate) async fn http_get(
+    url: &str,
+    headers: &[(&str, &str)],
+    proxy: ProxyConfig,
+) -> Result<(u16, String), String> {
+    send("GET", url.to_owned(), headers, None, proxy).await
+}
 
 /// One request through the proxy the user configured, blocking on the
 /// request: NSH's own `fetch` follows the system proxy, which is exactly
@@ -1411,17 +1353,40 @@ pub async fn test_proxy(proxy: ProxyConfig) -> Result<u64, String> {
         .map_err(|error| error.to_string())?
 }
 
+fn cached_agent(proxy_url: Option<&str>, timeout_secs: u64) -> Result<ureq::Agent, String> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+
+    type AgentCache = Mutex<HashMap<(Option<String>, u64), ureq::Agent>>;
+    static CACHE: OnceLock<AgentCache> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let key = (proxy_url.map(str::to_owned), timeout_secs);
+    if let Ok(guard) = cache.lock()
+        && let Some(agent) = guard.get(&key)
+    {
+        return Ok(agent.clone());
+    }
+    let proxy_opt = match proxy_url {
+        Some(url) => Some(ureq::Proxy::new(url).map_err(|e| format!("代理地址无效：{e}"))?),
+        None => None,
+    };
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(std::time::Duration::from_secs(timeout_secs)))
+        .http_status_as_error(false)
+        .proxy(proxy_opt)
+        .build()
+        .into();
+    if let Ok(mut guard) = cache.lock() {
+        guard.insert(key, agent.clone());
+    }
+    Ok(agent)
+}
+
 fn probe_proxy_url(url: &str, proxy: &ProxyConfig) -> Result<u64, String> {
     proxy.validate_endpoint()?;
     let started = std::time::Instant::now();
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .proxy(Some(
-            ureq::Proxy::new(&proxy.url()).map_err(|e| format!("代理地址无效：{e}"))?,
-        ))
-        .timeout_global(Some(std::time::Duration::from_secs(8)))
-        .http_status_as_error(false)
-        .build()
-        .into();
+    let proxy_url = proxy.url();
+    let agent = cached_agent(Some(&proxy_url), 8)?;
     match agent.get(url).header("User-Agent", USER_AGENT).call() {
         Ok(response) => {
             let status = response.status().as_u16();
@@ -1431,8 +1396,19 @@ fn probe_proxy_url(url: &str, proxy: &ProxyConfig) -> Result<u64, String> {
                 Err(format!("代理返回 HTTP {status}"))
             }
         }
-        Err(error) => Err(format!("经代理 {} 连接失败：{error}", proxy.url())),
+        Err(error) => Err(format!("经代理 {proxy_url} 连接失败：{error}")),
     }
+}
+
+fn send_with_headers<B>(
+    mut req: ureq::RequestBuilder<B>,
+    headers: &[(String, String)],
+    finish: impl FnOnce(ureq::RequestBuilder<B>) -> Result<ureq::http::Response<ureq::Body>, ureq::Error>,
+) -> Result<ureq::http::Response<ureq::Body>, ureq::Error> {
+    for (name, value) in headers {
+        req = req.header(name.as_str(), value.as_str());
+    }
+    finish(req)
 }
 
 /// The blocking request itself, on a blocking thread.
@@ -1444,67 +1420,16 @@ fn request(
     proxy: &ProxyConfig,
 ) -> Result<(u16, String), String> {
     proxy.validate()?;
-    let proxy_opt = if proxy.enabled {
-        Some(ureq::Proxy::new(&proxy.url()).map_err(|e| format!("代理地址无效：{e}"))?)
-    } else {
-        None
-    };
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_global(Some(std::time::Duration::from_secs(20)))
-        .http_status_as_error(false)
-        .proxy(proxy_opt)
-        .build()
-        .into();
+    let proxy_url = proxy.enabled.then(|| proxy.url());
+    let agent = cached_agent(proxy_url.as_deref(), 20)?;
     let response = match (method, body) {
-        ("POST", Some(body)) => {
-            let mut req = agent.post(url);
-            for (name, value) in headers {
-                req = req.header(name.as_str(), value.as_str());
-            }
-            req.send(body)
-        }
-        ("POST", None) => {
-            let mut req = agent.post(url);
-            for (name, value) in headers {
-                req = req.header(name.as_str(), value.as_str());
-            }
-            req.send_empty()
-        }
-        ("PUT", Some(body)) => {
-            let mut req = agent.put(url);
-            for (name, value) in headers {
-                req = req.header(name.as_str(), value.as_str());
-            }
-            req.send(body)
-        }
-        ("PATCH", Some(body)) => {
-            let mut req = agent.patch(url);
-            for (name, value) in headers {
-                req = req.header(name.as_str(), value.as_str());
-            }
-            req.send(body)
-        }
-        ("GET", None) => {
-            let mut req = agent.get(url);
-            for (name, value) in headers {
-                req = req.header(name.as_str(), value.as_str());
-            }
-            req.call()
-        }
-        ("HEAD", None) => {
-            let mut req = agent.head(url);
-            for (name, value) in headers {
-                req = req.header(name.as_str(), value.as_str());
-            }
-            req.call()
-        }
-        ("DELETE", None) => {
-            let mut req = agent.delete(url);
-            for (name, value) in headers {
-                req = req.header(name.as_str(), value.as_str());
-            }
-            req.call()
-        }
+        ("POST", Some(body)) => send_with_headers(agent.post(url), headers, |r| r.send(body)),
+        ("POST", None) => send_with_headers(agent.post(url), headers, |r| r.send_empty()),
+        ("PUT", Some(body)) => send_with_headers(agent.put(url), headers, |r| r.send(body)),
+        ("PATCH", Some(body)) => send_with_headers(agent.patch(url), headers, |r| r.send(body)),
+        ("GET", None) => send_with_headers(agent.get(url), headers, |r| r.call()),
+        ("HEAD", None) => send_with_headers(agent.head(url), headers, |r| r.call()),
+        ("DELETE", None) => send_with_headers(agent.delete(url), headers, |r| r.call()),
         (other, _) => return Err(format!("不支持的 HTTP 方法：{other}")),
     };
     match response {
@@ -1574,7 +1499,7 @@ mod tests {
 
     #[test]
     fn builds_the_authorization_url() {
-        let url = auth_url(ClientKind::Personal, "http://127.0.0.1:8080/oauth-callback", "abc");
+        let url = auth_url("http://127.0.0.1:8080/oauth-callback", "abc");
         assert!(url.starts_with("https://accounts.google.com/o/oauth2/v2/auth?"));
         assert!(url.contains("redirect_uri=http%3A%2F%2F127.0.0.1%3A8080%2Foauth-callback"));
         assert!(url.contains("access_type=offline"));
@@ -1680,13 +1605,6 @@ mod tests {
     }
 
     #[test]
-    fn recognizes_client_mismatch_errors() {
-        assert!(should_fallback_client(r#"续期失败：HTTP 401 {"error":"unauthorized_client"}"#));
-        assert!(should_fallback_client(r#"续期失败：HTTP 400 {"error":"invalid_client"}"#));
-        assert!(!should_fallback_client(r#"续期失败：HTTP 400 {"error":"invalid_grant"}"#));
-    }
-
-    #[test]
     fn summarizes_many_model_variants_into_core_quotas() {
         let body = r#"{
             "deprecatedModelIds": {
@@ -1763,7 +1681,7 @@ mod tests {
         }"#;
         // Pro with explicit Argon group receives Argon weekly quota 0.65, Gemini dual 5h (0.85) + weekly (0.95), and Claude 5.5&4.6 / GPT
         let pro_with_argon =
-            build_account_quotas(models_json, Some(&groups), Some(AccountTier::Pro), ClientKind::Personal)
+            build_account_quotas(models_json, Some(&groups), Some(AccountTier::Pro))
                 .expect("pro argon");
         assert_eq!(pro_with_argon.tier, Some(AccountTier::Pro));
         let names: Vec<&str> = pro_with_argon.models.iter().map(|m| m.name.as_str()).collect();
@@ -1778,7 +1696,7 @@ mod tests {
         // Free without Argon group gets only Gemini (weekly-only 0.95) + Claude (weekly-only)
         let no_argon_groups = &groups[..2];
         let free_res =
-            build_account_quotas(models_json, Some(no_argon_groups), Some(AccountTier::Free), ClientKind::Personal)
+            build_account_quotas(models_json, Some(no_argon_groups), Some(AccountTier::Free))
                 .expect("free");
         let free_names: Vec<&str> = free_res.models.iter().map(|m| m.name.as_str()).collect();
         assert_eq!(free_names, vec!["Gemini", "Claude 5.5&4.6 / GPT"]);
@@ -1787,7 +1705,7 @@ mod tests {
 
         // Ultra shares Gemini weekly quota for Argon (weekly-only, no 5H) at bottom when no split Argon group exists
         let ultra_res =
-            build_account_quotas(models_json, Some(no_argon_groups), Some(AccountTier::Ultra), ClientKind::Personal)
+            build_account_quotas(models_json, Some(no_argon_groups), Some(AccountTier::Ultra))
                 .expect("ultra");
         let ultra_names: Vec<&str> = ultra_res.models.iter().map(|m| m.name.as_str()).collect();
         assert_eq!(ultra_names, vec!["Gemini", "Claude 5.5&4.6 / GPT", "Gemini Argon"]);

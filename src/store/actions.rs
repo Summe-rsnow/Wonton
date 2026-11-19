@@ -1,5 +1,6 @@
-//! What the buttons do: the network work behind adding, refreshing and
-//! starting. Every flow reports through the notice line and keeps the
+//! What the buttons do: the network and launcher work behind adding,
+//! refreshing, switching, importing, and checking for updates. Every flow
+//! reports through the notice line or dedicated status signals and keeps the
 //! account list usable while it runs.
 
 use std::cell::RefCell;
@@ -15,41 +16,128 @@ use nsh_core::time::unix_ms;
 
 use super::{
     account_by_id, account_count, account_ids, busy, clear_notice, clear_selection, export_items,
-    insert_account, preferred_kind_for, proxy, proxy_testing, refresh_account, set_busy,
-    set_import_progress, set_notice, set_proxy_testing, set_switching_account_id, set_token,
-    switching_account_id, ImportProgress, Tone,
+    insert_account, proxy, proxy_testing, refresh_account, set_busy, set_import_progress,
+    set_notice, set_proxy_testing, set_switching_account_id, set_token, set_update_status,
+    switching_account_id, update_checking, ImportProgress, Tone, UpdateStatus,
 };
-use crate::google::{self, ClientKind, ImportEntry};
+use crate::google::{self, ImportEntry};
 use crate::launch;
+use crate::update::{self, UpdateCheckResult};
 
-/// Refreshes every account's quota, one after another: one notice at the end.
+/// Runs `items` through up to `max_concurrency` staggered async workers,
+/// invoking `on_progress` after each item and `on_done` once the last finishes.
+fn run_concurrent_queue<T, R>(
+    items: Vec<T>,
+    max_concurrency: usize,
+    worker_fn: impl Fn(T) -> std::pin::Pin<Box<dyn std::future::Future<Output = R>>> + 'static,
+    on_progress: impl Fn(usize, usize, Option<&T>, Option<&R>) + 'static,
+    on_done: impl Fn(Vec<R>) + 'static,
+) where
+    T: 'static,
+    R: 'static,
+{
+    let total = items.len();
+    let worker_count = total.min(max_concurrency).max(1);
+    struct QueueState<T, R> {
+        queue: VecDeque<T>,
+        results: Vec<R>,
+        completed: usize,
+        remaining_workers: usize,
+    }
+
+    let state = Rc::new(RefCell::new(QueueState {
+        queue: VecDeque::from(items),
+        results: Vec::with_capacity(total),
+        completed: 0,
+        remaining_workers: worker_count,
+    }));
+    let worker_fn = Rc::new(worker_fn);
+    let on_progress = Rc::new(on_progress);
+    let on_done = Rc::new(on_done);
+
+    {
+        let st = state.borrow();
+        on_progress(0, total, st.queue.front(), None);
+    }
+
+    for worker_index in 0..worker_count {
+        let state = Rc::clone(&state);
+        let worker_fn = Rc::clone(&worker_fn);
+        let on_progress = Rc::clone(&on_progress);
+        let on_done = Rc::clone(&on_done);
+        spawn(async move {
+            if worker_index > 0 {
+                timer(Duration::from_millis(worker_index as u64 * 40)).await;
+            }
+            loop {
+                let next_item = {
+                    let mut st = state.borrow_mut();
+                    let item = st.queue.pop_front();
+                    if let Some(ref current) = item {
+                        on_progress(st.completed, total, Some(current), None);
+                    }
+                    item
+                };
+                let Some(item) = next_item else {
+                    break;
+                };
+
+                let result = worker_fn(item).await;
+
+                let mut st = state.borrow_mut();
+                st.completed += 1;
+                on_progress(st.completed, total, None, Some(&result));
+                st.results.push(result);
+            }
+
+            let finished_results = {
+                let mut st = state.borrow_mut();
+                st.remaining_workers -= 1;
+                (st.remaining_workers == 0).then(|| std::mem::take(&mut st.results))
+            };
+            if let Some(results) = finished_results {
+                on_done(results);
+            }
+        });
+    }
+}
+
+/// Refreshes every account's quota concurrently (up to 5 workers), reporting one notice at the end.
 pub(crate) fn refresh_all() {
+    if busy() {
+        return;
+    }
     if account_count() == 0 {
         set_notice("还没有账号", Tone::Info);
         return;
     }
+    let ids = account_ids();
     set_busy(true);
-    spawn(async move {
-        let ids = account_ids();
-        let mut failed = 0;
-        for id in ids {
-            refresh_account(id).await;
-            if account_by_id(id).is_some_and(|account| account.error.is_some()) {
-                failed += 1;
+    run_concurrent_queue(
+        ids,
+        5,
+        |id| {
+            Box::pin(async move {
+                refresh_account(id).await;
+                account_by_id(id).is_some_and(|account| account.error.is_some())
+            })
+        },
+        |_, _, _, _| {},
+        |failures| {
+            set_busy(false);
+            let failed = failures.into_iter().filter(|failed| *failed).count();
+            if failed == 0 {
+                set_notice("额度已刷新", Tone::Ok);
+            } else {
+                set_notice(format!("{failed} 个账号刷新失败"), Tone::Bad);
             }
-        }
-        set_busy(false);
-        if failed == 0 {
-            set_notice("额度已刷新", Tone::Ok);
-        } else {
-            set_notice(format!("{failed} 个账号刷新失败"), Tone::Bad);
-        }
-    });
+        },
+    );
 }
 
-/// Adds every refresh token in `text`, with the client that issued them.
-/// Failures are counted, not fatal: one bad token does not stop the rest.
-pub(crate) fn add_tokens(text: String, kind: ClientKind) {
+/// Adds every refresh token in `text`. Failures are counted, not fatal: one bad
+/// token does not stop the rest.
+pub(crate) fn add_tokens(text: String) {
     let tokens = google::parse_tokens(&text);
     if tokens.is_empty() {
         set_notice("没有识别到 refresh_token", Tone::Bad);
@@ -61,10 +149,10 @@ pub(crate) fn add_tokens(text: String, kind: ClientKind) {
         let mut added = 0;
         let mut failed = Vec::new();
         for token in tokens {
-            match google::refresh(&token, kind, proxy.clone()).await {
+            match google::refresh(&token, proxy.clone()).await {
                 Ok(tokens) => match google::email(&tokens.access_token, proxy.clone()).await {
                     Ok(email) => {
-                        let id = insert_account(&email, &token, kind);
+                        let id = insert_account(&email, &token);
                         set_token(id, tokens);
                         refresh_account(id).await;
                         added += 1;
@@ -88,11 +176,11 @@ pub(crate) fn add_tokens(text: String, kind: ClientKind) {
 
 /// Opens the browser, waits for Google's redirect on a loopback port, and
 /// adds the account it belongs to.
-pub(crate) fn add_account_by_oauth(kind: ClientKind) {
+pub(crate) fn add_account_by_oauth() {
     set_busy(true);
     set_notice("等待浏览器授权…", Tone::Info);
     spawn(async move {
-        match login(kind).await {
+        match login().await {
             Ok((email, id)) => {
                 set_busy(false);
                 set_notice(format!("已添加 {email}"), Tone::Ok);
@@ -107,23 +195,23 @@ pub(crate) fn add_account_by_oauth(kind: ClientKind) {
 }
 
 /// The whole browser flow: listen, open, wait, exchange, read the e-mail.
-async fn login(kind: ClientKind) -> Result<(String, u32), String> {
+async fn login() -> Result<(String, u32), String> {
     let proxy = proxy();
     let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| format!("无法监听本地端口：{e}"))?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
     let redirect_uri = format!("http://127.0.0.1:{port}/oauth-callback");
     let state = format!("{:x}{:x}", unix_ms() as u64, std::process::id());
-    let url = google::auth_url(kind, &redirect_uri, &state);
+    let url = google::auth_url(&redirect_uri, &state);
     let _ = open_url(url).await;
 
     let expected = state.clone();
     let code = blocking(move || wait_for_code(listener, &expected))
         .await
         .map_err(|e| e.to_string())??;
-    let tokens = google::exchange_code(&code, &redirect_uri, kind, proxy.clone()).await?;
+    let tokens = google::exchange_code(&code, &redirect_uri, proxy.clone()).await?;
     let email = google::email(&tokens.access_token, proxy).await?;
     let refresh_token = tokens.refresh_token.clone().ok_or("Google 没有返回 refresh_token")?;
-    let id = insert_account(&email, &refresh_token, kind);
+    let id = insert_account(&email, &refresh_token);
     set_token(id, tokens);
     Ok((email, id))
 }
@@ -196,10 +284,10 @@ pub(crate) fn import_local() {
             }
         };
         let proxy = proxy();
-        match google::refresh_with_fallback(&token, Some(ClientKind::Personal), proxy.clone()).await {
-            Ok((tokens, kind)) => match google::email(&tokens.access_token, proxy).await {
+        match google::refresh_with_rate_retry(&token, proxy.clone()).await {
+            Ok(tokens) => match google::email(&tokens.access_token, proxy).await {
                 Ok(email) => {
-                    let id = insert_account(&email, &token, kind);
+                    let id = insert_account(&email, &token);
                     set_token(id, tokens);
                     set_busy(false);
                     set_notice(format!("已导入 {email}"), Tone::Ok);
@@ -238,13 +326,17 @@ pub(crate) fn test_proxy_action(config: launch::ProxyConfig) {
     });
 }
 
-/// Starts Antigravity behind the saved proxy (or directly if disabled) without switching credentials.
-pub(crate) fn launch_app() {
+/// Starts the specified Antigravity client behind the saved proxy (or directly if disabled)
+/// without switching credentials.
+pub(crate) fn launch_target_app(target: launch::LaunchTarget) {
     clear_notice();
     let proxy = proxy();
-    match launch::launch(&proxy) {
-        Ok(pid) if proxy.enabled => set_notice(format!("已启动（pid {pid}），代理 {}", proxy.url()), Tone::Ok),
-        Ok(pid) => set_notice(format!("已启动（pid {pid}），直连"), Tone::Ok),
+    match launch::launch_target(target, &proxy) {
+        Ok(pid) if proxy.enabled => set_notice(
+            format!("已启动 {}（pid {pid}），代理 {}", target.label(), proxy.url()),
+            Tone::Ok,
+        ),
+        Ok(pid) => set_notice(format!("已启动 {}（pid {pid}），直连", target.label()), Tone::Ok),
         Err(error) => set_notice(error, Tone::Bad),
     }
 }
@@ -326,6 +418,31 @@ pub(crate) fn refresh_account_now(id: u32) {
     });
 }
 
+/// Checks GitHub Releases for a newer version of Wonton.
+pub(crate) fn check_for_updates_action() {
+    if update_checking() {
+        return;
+    }
+    set_update_status(UpdateStatus::Checking);
+    spawn(async move {
+        let proxy_cfg = proxy();
+        match update::check_latest_release(crate::APP_VERSION, proxy_cfg).await {
+            Ok(UpdateCheckResult::UpToDate { latest }) => {
+                set_update_status(UpdateStatus::UpToDate { latest });
+            }
+            Ok(UpdateCheckResult::Available(info)) => {
+                set_update_status(UpdateStatus::Available(info));
+            }
+            Ok(UpdateCheckResult::NoRelease) => {
+                set_update_status(UpdateStatus::NoRelease);
+            }
+            Err(err) => {
+                set_update_status(UpdateStatus::Error(err));
+            }
+        }
+    });
+}
+
 /// Exports either a single account, selected accounts, or all accounts as JSON.
 pub(crate) fn export_accounts_action(single_id: Option<u32>) {
     let items = export_items(single_id);
@@ -376,7 +493,7 @@ pub(crate) fn export_accounts_action(single_id: Option<u32>) {
 }
 
 /// Imports an Antigravity-Manager JSON account export via a file open dialog,
-/// refreshing tokens concurrently with Personal ↔ Enterprise fallback.
+/// refreshing tokens concurrently.
 pub(crate) fn import_accounts_action() {
     if busy() {
         return;
@@ -427,118 +544,79 @@ pub(crate) fn import_accounts_action() {
     });
 }
 
-struct ImportJob {
-    queue: VecDeque<ImportEntry>,
-    proxy: launch::ProxyConfig,
-    total: usize,
-    completed: usize,
-    success: usize,
-    first_error: Option<String>,
-    remaining_workers: usize,
-}
-
-fn update_import_progress_ui(job: &ImportJob, email: impl Into<String>) {
-    set_import_progress(Some(ImportProgress {
-        current: job.completed,
-        total: job.total,
-        success: job.success,
-        failed: job.completed.saturating_sub(job.success),
-        current_email: email.into(),
-    }));
-}
-
 fn run_batch_import(entries: Vec<ImportEntry>) {
-    let total = entries.len();
-    let worker_count = total.min(6);
-    let initial_email = entries
-        .first()
-        .and_then(|entry| entry.email.clone())
-        .unwrap_or_else(|| "准备导入…".to_owned());
+    let proxy_cfg = proxy();
+    let success_count = Rc::new(RefCell::new(0_usize));
+    let success_prog = Rc::clone(&success_count);
+    let success_done = Rc::clone(&success_count);
 
-    let job = Rc::new(RefCell::new(ImportJob {
-        queue: VecDeque::from(entries),
-        proxy: proxy(),
-        total,
-        completed: 0,
-        success: 0,
-        first_error: None,
-        remaining_workers: worker_count,
-    }));
-    update_import_progress_ui(&job.borrow(), initial_email);
-
-    for worker_index in 0..worker_count {
-        let job = Rc::clone(&job);
-        spawn(async move {
-            if worker_index > 0 {
-                timer(Duration::from_millis(worker_index as u64 * 45)).await;
+    run_concurrent_queue(
+        entries,
+        6,
+        move |entry| {
+            let proxy_cfg = proxy_cfg.clone();
+            Box::pin(async move { import_one_entry(entry, proxy_cfg).await })
+        },
+        move |completed, total, starting, finished| {
+            if let Some(res) = finished
+                && res.is_ok()
+            {
+                *success_prog.borrow_mut() += 1;
             }
-            loop {
-                let (entry, proxy_cfg) = {
-                    let mut state = job.borrow_mut();
-                    let Some(entry) = state.queue.pop_front() else {
-                        break;
-                    };
-                    let active_label = entry
-                        .email
-                        .clone()
-                        .unwrap_or_else(|| "正在验证 refresh_token…".to_owned());
-                    update_import_progress_ui(&state, active_label);
-                    (entry, state.proxy.clone())
-                };
-
-                let result = import_one_entry(entry, proxy_cfg).await;
-
-                let mut state = job.borrow_mut();
-                state.completed += 1;
-                let label = match result {
-                    Ok(email) => {
-                        state.success += 1;
-                        email
-                    }
-                    Err(error) => {
-                        if state.first_error.is_none() {
-                            state.first_error = Some(error);
-                        }
-                        "导入失败".to_owned()
-                    }
-                };
-                update_import_progress_ui(&state, label);
-            }
-
-            let mut state = job.borrow_mut();
-            state.remaining_workers -= 1;
-            if state.remaining_workers == 0 {
-                let success = state.success;
-                let failed = state.total.saturating_sub(success);
-                let first_error = state.first_error.take().unwrap_or_default();
-                drop(state);
-
-                set_import_progress(None);
-                set_busy(false);
-                if failed == 0 {
-                    set_notice(format!("已导入 {success} 个账号"), Tone::Ok);
-                } else if success > 0 {
-                    set_notice(
-                        format!("导入完成：{success} 个成功，{failed} 个失败：{first_error}"),
-                        Tone::Bad,
-                    );
-                } else {
-                    set_notice(format!("导入失败：{first_error}"), Tone::Bad);
+            let success = *success_prog.borrow();
+            let current_email = if let Some(entry) = starting {
+                entry
+                    .email
+                    .clone()
+                    .unwrap_or_else(|| "正在验证 refresh_token…".to_owned())
+            } else if let Some(res) = finished {
+                match res {
+                    Ok(email) => email.clone(),
+                    Err(_) => "导入失败".to_owned(),
                 }
+            } else {
+                "准备导入…".to_owned()
+            };
+            set_import_progress(Some(ImportProgress {
+                current: completed,
+                total,
+                success,
+                failed: completed.saturating_sub(success),
+                current_email,
+            }));
+        },
+        move |results| {
+            let total = results.len();
+            let success = *success_done.borrow();
+            let failed = total.saturating_sub(success);
+            let first_error = results
+                .into_iter()
+                .find_map(|res| res.err())
+                .unwrap_or_default();
+
+            set_import_progress(None);
+            set_busy(false);
+            if failed == 0 {
+                set_notice(format!("已导入 {success} 个账号"), Tone::Ok);
+            } else if success > 0 {
+                set_notice(
+                    format!("导入完成：{success} 个成功，{failed} 个失败：{first_error}"),
+                    Tone::Bad,
+                );
+            } else {
+                set_notice(format!("导入失败：{first_error}"), Tone::Bad);
             }
-        });
-    }
+        },
+    );
 }
 
 async fn import_one_entry(
     entry: ImportEntry,
     proxy_cfg: launch::ProxyConfig,
 ) -> Result<String, String> {
-    let preferred = preferred_kind_for(&entry);
-    let (tokens, kind) =
-        google::refresh_with_fallback(&entry.refresh_token, preferred, proxy_cfg.clone()).await?;
+    let tokens = google::refresh_with_rate_retry(&entry.refresh_token, proxy_cfg.clone()).await?;
     let email = google::email(&tokens.access_token, proxy_cfg).await?;
-    let id = insert_account(&email, &entry.refresh_token, kind);
+    let id = insert_account(&email, &entry.refresh_token);
     set_token(id, tokens);
     refresh_account(id).await;
     Ok(email)

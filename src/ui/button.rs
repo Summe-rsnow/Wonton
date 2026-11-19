@@ -1,7 +1,7 @@
 //! The app's buttons and icon actions, with uniform hover, active,
 //! focus, disabled, and destructive feedback.
 
-use nsh_base::{button, theme, tooltip};
+use nsh_base::{button, link, theme, tooltip};
 use nsh_core::element::IntoTooltip;
 use nsh_core::prelude::*;
 
@@ -28,6 +28,8 @@ pub(crate) enum IconKind {
     Primary,
     /// Bordered toolbar icon button (30pt scale).
     Secondary,
+    /// Bordered toolbar client launcher (30pt scale).
+    ToolbarLaunch,
     /// Pill surface used for per-account client launchers (26pt compact row scale).
     Launch,
     /// Borderless utility action (export, refresh, dismiss).
@@ -159,11 +161,11 @@ pub(crate) fn icon_action_with_tip(
     on_press: impl Fn() + 'static,
 ) -> impl IntoElement {
     let size = match kind {
-        IconKind::Primary | IconKind::Secondary => 30.0,
+        IconKind::Primary | IconKind::Secondary | IconKind::ToolbarLaunch => 30.0,
         IconKind::Launch | IconKind::Subtle | IconKind::Danger => 26.0,
     };
     let icon_size = match kind {
-        IconKind::Primary | IconKind::Secondary => 15.0,
+        IconKind::Primary | IconKind::Secondary | IconKind::ToolbarLaunch => 15.0,
         IconKind::Launch | IconKind::Subtle | IconKind::Danger => 14.0,
     };
     let base = button()
@@ -194,7 +196,7 @@ pub(crate) fn icon_action_with_tip(
             .hover(|s| s.bg(move || theme().accent).border_color(move || theme().ring))
             .active(|s| s.bg(move || theme().muted))
             .child(svg_icon(markup, icon_size, move || theme().foreground)),
-        IconKind::Launch => base
+        IconKind::ToolbarLaunch | IconKind::Launch => base
             .border_1()
             .border_color(move || theme().border)
             .bg(move || theme().secondary)
@@ -250,4 +252,75 @@ pub(crate) fn segmented_icon(
                     }
                 })),
         )
+}
+
+/// An external hyperlink styled with the app's primary accent and focus ring.
+pub(crate) fn external_link<M>(
+    label: impl IntoReactive<SharedString>,
+    href: impl nsh_core::element::IntoProp<Option<SharedString>, M>,
+) -> impl IntoElement {
+    link()
+        .href(href)
+        .flex_row()
+        .items_center()
+        .gap_1()
+        .rounded(px(4.0))
+        .focus_visible(focus_ring)
+        .hover(|s| s.opacity(0.8))
+        .active(|s| s.opacity(0.65))
+        .child(
+            text(label)
+                .text_xs()
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(move || theme().primary),
+        )
+        .child(svg_icon(super::icons::EXTERNAL_LINK, 12.0, move || {
+            theme().primary
+        }))
+}
+
+/// A button-styled external hyperlink (e.g. primary release download CTA).
+pub(crate) fn external_link_button<M>(
+    kind: ButtonKind,
+    label: impl IntoReactive<SharedString>,
+    href: impl nsh_core::element::IntoProp<Option<SharedString>, M>,
+) -> impl IntoElement {
+    let base = link()
+        .href(href)
+        .h_8()
+        .px_3()
+        .flex_row()
+        .items_center()
+        .justify_center()
+        .gap_1p5()
+        .rounded(radius)
+        .transition_transform()
+        .duration(150.0)
+        .active(|s| s.scale(0.97))
+        .focus_visible(focus_ring);
+    match kind {
+        ButtonKind::Primary => base
+            .bg(move || theme().primary)
+            .hover(|s| s.opacity(0.9))
+            .active(|s| s.opacity(0.85))
+            .child(
+                text(label)
+                    .text_sm()
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(move || theme().primary_foreground),
+            )
+            .child(svg_icon(super::icons::EXTERNAL_LINK, 13.0, move || {
+                theme().primary_foreground
+            })),
+        _ => base
+            .border_1()
+            .border_color(move || theme().border)
+            .bg(move || theme().background)
+            .hover(|s| s.bg(move || theme().accent))
+            .active(|s| s.bg(move || theme().muted))
+            .child(text(label).text_sm().text_color(move || theme().foreground))
+            .child(svg_icon(super::icons::EXTERNAL_LINK, 13.0, move || {
+                theme().foreground
+            })),
+    }
 }

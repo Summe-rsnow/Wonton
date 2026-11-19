@@ -12,13 +12,16 @@ mod quota;
 mod surface;
 
 pub(crate) use button::{
-    action, action_disabled, hint_tooltip, icon_action, icon_action_disabled,
-    icon_action_with_tip, segmented_icon, ButtonKind, IconKind,
+    action, action_disabled, external_link, external_link_button, hint_tooltip, icon_action,
+    icon_action_disabled, icon_action_with_tip, segmented_icon, ButtonKind, IconKind,
 };
 pub(crate) use input::{checkbox, radio_option, text_field, toggle_switch};
 pub(crate) use progress::progress_bar;
 pub(crate) use quota::quota_row;
-pub(crate) use surface::{card, divider, empty_state, notice_toast, status_badge, tier_badge};
+pub(crate) use surface::{
+    card, divider, empty_state, modal_dialog, notice_toast, progress_modal_dialog, status_badge,
+    tier_badge,
+};
 
 use nsh_base::theme;
 use nsh_core::element::StyleRefinement;

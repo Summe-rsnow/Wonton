@@ -3,11 +3,23 @@
 // (`nsh.json` "root").
 import { expect, open, test } from "nsh/test";
 
-test("opens the add-account dialog", async () => {
+test("shows version and opens add-account and about dialogs", async () => {
   const app = await open(".");
-  expect(app.texts().join("\n")).toContain("还没有账号");
+  const initial = app.texts().join("\n");
+  expect(initial).toContain("还没有账号");
+  expect(initial).toContain("v1.1.0");
+
   await app.press("role:button[添加账号…]");
-  expect(app.texts().join("\n")).toContain("网页授权");
+  const addTexts = app.texts().join("\n");
+  expect(addTexts).toContain("网页授权");
+  expect(addTexts).not.toContain("使用企业版（GCP）客户端");
   await app.press("role:button[关闭]");
   expect(app.texts().join("\n")).not.toContain("网页授权");
+
+  await app.press("role:button[关于]");
+  const aboutTexts = app.texts().join("\n");
+  expect(aboutTexts).toContain("版本更新");
+  expect(aboutTexts).toContain("Apache-2.0");
+  await app.press("role:button[关闭]");
+  expect(app.texts().join("\n")).not.toContain("版本更新");
 });

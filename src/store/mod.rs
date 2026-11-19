@@ -5,17 +5,19 @@
 mod actions;
 
 pub(crate) use actions::{
-    add_account_by_oauth, add_tokens, export_accounts_action, import_accounts_action, import_local,
-    launch_account_target, launch_app, refresh_account_now, refresh_all, test_proxy_action,
+    add_account_by_oauth, add_tokens, check_for_updates_action, export_accounts_action,
+    import_accounts_action, import_local, launch_account_target, launch_target_app,
+    refresh_account_now, refresh_all, test_proxy_action,
 };
 
 use nsh_core::prelude::*;
 use nsh_core::storage::Storage;
 use nsh_core::time::unix_ms;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::google::{self, AccountTier, ClientKind, ModelQuota};
+use crate::google::{self, AccountTier, ModelQuota};
 use crate::launch::ProxyConfig;
+use crate::update::ReleaseInfo;
 
 const STORAGE_KEY: &str = "wonton.state.v1";
 const ENCRYPTED_PREFIX: &str = "wonton:enc:v1:";
@@ -79,13 +81,24 @@ struct Saved {
     close_behavior: CloseBehavior,
 }
 
+fn deserialize_tier_compat<'de, D>(deserializer: D) -> Result<Option<AccountTier>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw: Option<String> = Option::deserialize(deserializer)?;
+    Ok(raw.and_then(|value| match value.as_str() {
+        "Free" => Some(AccountTier::Free),
+        "Pro" => Some(AccountTier::Pro),
+        "Ultra" => Some(AccountTier::Ultra),
+        _ => None,
+    }))
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct SavedAccount {
     email: String,
     refresh_token: String,
-    #[serde(default)]
-    kind: ClientKind,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_tier_compat")]
     tier: Option<AccountTier>,
     #[serde(default)]
     models: Vec<ModelQuota>,
@@ -120,7 +133,6 @@ pub(crate) struct Account {
     pub(crate) id: u32,
     pub(crate) email: String,
     pub(crate) refresh_token: String,
-    pub(crate) kind: ClientKind,
     pub(crate) tier: Option<AccountTier>,
     pub(crate) models: Vec<ModelQuota>,
     pub(crate) fetched_at: Option<i64>,
@@ -129,6 +141,18 @@ pub(crate) struct Account {
     /// The session's access token: never saved.
     pub(crate) access_token: Option<String>,
     pub(crate) expires_at: i64,
+}
+
+/// UI-facing projection of an [`Account`], omitting credentials so token
+/// renewals do not trigger unnecessary card re-evaluations.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct AccountCardView {
+    pub(crate) email: String,
+    pub(crate) tier: Option<AccountTier>,
+    pub(crate) models: Vec<ModelQuota>,
+    pub(crate) fetched_at: Option<i64>,
+    pub(crate) error: Option<String>,
+    pub(crate) needs_login: bool,
 }
 
 /// What the notice line under the toolbar says.
@@ -155,6 +179,18 @@ pub(crate) struct ImportProgress {
     pub(crate) current_email: String,
 }
 
+/// State of checking GitHub Releases for a newer version.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) enum UpdateStatus {
+    #[default]
+    Idle,
+    Checking,
+    UpToDate { latest: String },
+    Available(ReleaseInfo),
+    NoRelease,
+    Error(String),
+}
+
 #[derive(Debug, Clone, PartialEq)]
 struct State {
     accounts: Vec<Account>,
@@ -170,6 +206,7 @@ struct State {
     target: Option<String>,
     selected_ids: Vec<u32>,
     import_progress: Option<ImportProgress>,
+    update_status: UpdateStatus,
 }
 
 impl Default for State {
@@ -188,6 +225,7 @@ impl Default for State {
             target: crate::launch::detect_target().map(|path| path.display().to_string()),
             selected_ids: Vec::new(),
             import_progress: None,
+            update_status: UpdateStatus::Idle,
         }
     }
 }
@@ -216,16 +254,17 @@ pub(crate) fn load() {
         for account in saved.accounts {
             let id = state.next_id;
             state.next_id += 1;
-            let tier = account.tier.or_else(|| {
-                (account.kind == ClientKind::Enterprise).then_some(AccountTier::Enterprise)
-            });
+            let models = if account.models.is_empty() {
+                Vec::new()
+            } else {
+                google::summarize_quotas(&account.models)
+            };
             state.accounts.push(Account {
                 id,
                 email: account.email,
                 refresh_token: account.refresh_token,
-                kind: account.kind,
-                tier,
-                models: account.models,
+                tier: account.tier,
+                models,
                 fetched_at: account.fetched_at,
                 error: None,
                 needs_login: false,
@@ -254,7 +293,6 @@ fn save() {
             .map(|account| SavedAccount {
                 email: account.email.clone(),
                 refresh_token: account.refresh_token.clone(),
-                kind: account.kind,
                 tier: account.tier,
                 models: account.models.clone(),
                 fetched_at: account.fetched_at,
@@ -269,23 +307,29 @@ fn save() {
         theme: state.theme,
         close_behavior: state.close_behavior,
     });
-    if let Ok(json) = serde_json::to_string(&saved) {
-        if let Some(encoded) = encode_storage(&json) {
-            let _ = Storage::set_item(STORAGE_KEY, encoded);
-        }
+    if let Ok(json) = serde_json::to_string(&saved)
+        && let Some(encoded) = encode_storage(&json)
+    {
+        let _ = Storage::set_item(STORAGE_KEY, encoded);
     }
 }
 
-fn storage_key() -> Option<ring::aead::LessSafeKey> {
+fn storage_key() -> Option<&'static ring::aead::LessSafeKey> {
+    use std::sync::OnceLock;
     use ring::{aead, hkdf};
-    let salt = hkdf::Salt::new(hkdf::HKDF_SHA256, b"com.xcmm.wonton.storage.salt.v1");
-    let prk = salt.extract(b"wonton.local.storage.master.v1");
-    let info = [STORAGE_KEY.as_bytes()];
-    let okm = prk.expand(&info, &aead::AES_256_GCM).ok()?;
-    let mut key_bytes = [0u8; 32];
-    okm.fill(&mut key_bytes).ok()?;
-    let unbound = aead::UnboundKey::new(&aead::AES_256_GCM, &key_bytes).ok()?;
-    Some(aead::LessSafeKey::new(unbound))
+
+    static KEY: OnceLock<Option<aead::LessSafeKey>> = OnceLock::new();
+    KEY.get_or_init(|| {
+        let salt = hkdf::Salt::new(hkdf::HKDF_SHA256, b"com.xcmm.wonton.storage.salt.v1");
+        let prk = salt.extract(b"wonton.local.storage.master.v1");
+        let info = [STORAGE_KEY.as_bytes()];
+        let okm = prk.expand(&info, &aead::AES_256_GCM).ok()?;
+        let mut key_bytes = [0u8; 32];
+        okm.fill(&mut key_bytes).ok()?;
+        let unbound = aead::UnboundKey::new(&aead::AES_256_GCM, &key_bytes).ok()?;
+        Some(aead::LessSafeKey::new(unbound))
+    })
+    .as_ref()
 }
 
 /// Encrypts serialized state with cross-platform AES-256-GCM (`ring`).
@@ -345,6 +389,24 @@ pub(crate) fn account_count() -> usize {
 /// One account, or none once it is removed (tracked where it is read).
 pub(crate) fn account_by_id(id: u32) -> Option<Account> {
     state().with(|state| state.accounts.iter().find(|account| account.id == id).cloned())
+}
+
+/// UI-only projection for an account card (tracked where it is read).
+pub(crate) fn account_card_view(id: u32) -> Option<AccountCardView> {
+    state().with(|state| {
+        state
+            .accounts
+            .iter()
+            .find(|account| account.id == id)
+            .map(|account| AccountCardView {
+                email: account.email.clone(),
+                tier: account.tier,
+                models: account.models.clone(),
+                fetched_at: account.fetched_at,
+                error: account.error.clone(),
+                needs_login: account.needs_login,
+            })
+    })
 }
 
 /// The selected appearance preference (`system`, `light`, or `dark`).
@@ -448,6 +510,25 @@ fn set_import_progress(progress: Option<ImportProgress>) {
     state().update(|state| state.import_progress = progress);
 }
 
+pub(crate) fn update_status() -> UpdateStatus {
+    state().with(|state| state.update_status.clone())
+}
+
+pub(crate) fn update_checking() -> bool {
+    state().with(|state| matches!(state.update_status, UpdateStatus::Checking))
+}
+
+pub(crate) fn available_update() -> Option<ReleaseInfo> {
+    state().with(|state| match &state.update_status {
+        UpdateStatus::Available(info) => Some(info.clone()),
+        _ => None,
+    })
+}
+
+fn set_update_status(status: UpdateStatus) {
+    state().update(|state| state.update_status = status);
+}
+
 pub(crate) fn selected_count() -> usize {
     state().with(|state| state.selected_ids.len())
 }
@@ -522,22 +603,6 @@ fn select_export_items(state: &State, single_id: Option<u32>) -> Vec<google::Exp
         .collect()
 }
 
-fn preferred_kind_for(entry: &google::ImportEntry) -> Option<ClientKind> {
-    state().with(|state| {
-        state
-            .accounts
-            .iter()
-            .find(|account| {
-                account.refresh_token == entry.refresh_token
-                    || entry
-                        .email
-                        .as_deref()
-                        .is_some_and(|email| account.email.eq_ignore_ascii_case(email))
-            })
-            .map(|account| account.kind)
-    })
-}
-
 /// Saves the proxy the fields describe; the form validates before calling.
 pub(crate) fn set_proxy(proxy: ProxyConfig) {
     state().update(|state| state.proxy = proxy);
@@ -587,7 +652,7 @@ fn update_account(id: u32, change: impl FnOnce(&mut Account)) {
 }
 
 /// Adds an account that already has a token and an e-mail, at the end.
-fn insert_account(email: &str, refresh_token: &str, kind: ClientKind) -> u32 {
+fn insert_account(email: &str, refresh_token: &str) -> u32 {
     let mut id = 0;
     state().update(|state| {
         if let Some(existing) = state.accounts.iter_mut().find(|account| {
@@ -595,7 +660,6 @@ fn insert_account(email: &str, refresh_token: &str, kind: ClientKind) -> u32 {
         }) {
             existing.email = email.to_owned();
             existing.refresh_token = refresh_token.to_owned();
-            existing.kind = kind;
             existing.error = None;
             existing.needs_login = false;
             existing.access_token = None;
@@ -609,8 +673,7 @@ fn insert_account(email: &str, refresh_token: &str, kind: ClientKind) -> u32 {
             id,
             email: email.to_owned(),
             refresh_token: refresh_token.to_owned(),
-            kind,
-            tier: (kind == ClientKind::Enterprise).then_some(AccountTier::Enterprise),
+            tier: None,
             models: Vec::new(),
             fetched_at: None,
             error: None,
@@ -662,7 +725,7 @@ async fn access_token(account: &Account) -> Result<String, String> {
     {
         return Ok(token.clone());
     }
-    let tokens = google::refresh(&account.refresh_token, account.kind, proxy()).await?;
+    let tokens = google::refresh(&account.refresh_token, proxy()).await?;
     let access = tokens.access_token.clone();
     set_token(account.id, tokens);
     Ok(access)
@@ -688,7 +751,7 @@ async fn refresh_account(id: u32) {
             return;
         }
     };
-    match google::quota(&token, account.kind, proxy()).await {
+    match google::quota(&token, proxy()).await {
         Ok(snapshot) => set_quota(id, snapshot),
         Err(error) => set_error(id, error, false),
     }
@@ -704,8 +767,7 @@ mod tests {
             accounts: vec![SavedAccount {
                 email: "a@b.c".to_owned(),
                 refresh_token: "1//0gTOKEN".to_owned(),
-                kind: ClientKind::Enterprise,
-                tier: Some(AccountTier::Enterprise),
+                tier: Some(AccountTier::Ultra),
                 models: vec![ModelQuota {
                     name: "Claude Sonnet".to_owned(),
                     remaining: 0.5,
@@ -718,9 +780,9 @@ mod tests {
             }],
             proxy: SavedProxy {
                 enabled: false,
-                protocol: "socks5".to_owned(),
+                protocol: "http".to_owned(),
                 host: "127.0.0.1".to_owned(),
-                port: 1080,
+                port: 7890,
             },
             theme: ThemeMode::Dark,
             close_behavior: CloseBehavior::Tray,
@@ -730,13 +792,14 @@ mod tests {
     }
 
     #[test]
-    fn reads_an_older_state_without_the_newer_fields() {
-        let saved: Saved =
-            serde_json::from_str(r#"{"accounts":[{"email":"a@b.c","refresh_token":"1//0gT"}]}"#)
-                .expect("saved");
-        assert_eq!(saved.accounts.len(), 1);
-        assert_eq!(saved.accounts[0].kind, ClientKind::Personal);
+    fn reads_an_older_state_without_the_newer_fields_and_ignores_legacy_enterprise() {
+        let saved: Saved = serde_json::from_str(
+            r#"{"accounts":[{"email":"a@b.c","refresh_token":"1//0gT"},{"email":"old@b.c","refresh_token":"1//0gE","kind":"Enterprise","tier":"Enterprise"}]}"#,
+        )
+        .expect("saved");
+        assert_eq!(saved.accounts.len(), 2);
         assert_eq!(saved.accounts[0].tier, None);
+        assert_eq!(saved.accounts[1].tier, None);
         assert!(saved.accounts[0].models.is_empty());
         assert_eq!(saved.proxy.host, "127.0.0.1");
         assert!(saved.proxy.enabled);
@@ -759,7 +822,6 @@ mod tests {
                     id: 1,
                     email: "a@b.c".to_owned(),
                     refresh_token: "1//a".to_owned(),
-                    kind: ClientKind::Personal,
                     tier: Some(AccountTier::Pro),
                     models: Vec::new(),
                     fetched_at: None,
@@ -772,8 +834,7 @@ mod tests {
                     id: 2,
                     email: "d@e.f".to_owned(),
                     refresh_token: "1//d".to_owned(),
-                    kind: ClientKind::Enterprise,
-                    tier: Some(AccountTier::Enterprise),
+                    tier: Some(AccountTier::Ultra),
                     models: Vec::new(),
                     fetched_at: None,
                     error: None,
@@ -801,7 +862,6 @@ mod tests {
             id,
             email: email.to_owned(),
             refresh_token: format!("1//{id}"),
-            kind: ClientKind::Personal,
             tier: None,
             models: Vec::new(),
             fetched_at: None,

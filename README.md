@@ -1,70 +1,118 @@
 <div align="center">
 
-<img src="assets/logo.svg" alt="Wonton Logo" width="120" />
+<img src="assets/logo.svg" alt="Wonton Logo" width="112" />
 
 # Wonton
 
 **轻量、原生的 Antigravity 多账号与额度管理工具**
 
-在一个窗口内完成账号管理、实时模型额度查看、账号切换与指定代理启动。  
+在一个窗口内完成多账号管理、实时模型额度监控、账号凭证切换与进程级独立代理启动。  
 基于 **Rust + [NSH](https://github.com/longbridge/nsh)** 构建，纯原生渲染，无 JavaScript 运行时开销。
 
-![Rust](https://img.shields.io/badge/Rust-2024-orange?style=flat-square&logo=rust)
-![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-blue?style=flat-square)
-![UI](https://img.shields.io/badge/UI-NSH%20Native-6366f1?style=flat-square)
+<p>
+  <a href="https://github.com/Summe-rsnow/Wonton/releases"><img src="https://img.shields.io/badge/Version-v1.1.0-1a73e8?style=flat-square" alt="Version v1.1.0" /></a>
+  <img src="https://img.shields.io/badge/Rust-2024-orange?style=flat-square&logo=rust" alt="Rust 2024" />
+  <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-0ea5e9?style=flat-square" alt="Platforms" />
+  <img src="https://img.shields.io/badge/UI-NSH%20Native-6366f1?style=flat-square" alt="UI NSH Native" />
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache--2.0-146c2e?style=flat-square" alt="License Apache-2.0" /></a>
+</p>
 
+<p>
+  <a href="#-界面预览">界面预览</a> ·
+  <a href="#-核心特性">核心特性</a> ·
+  <a href="#-快速开始">快速开始</a> ·
+  <a href="#-项目结构">项目结构</a> ·
+  <a href="https://github.com/Summe-rsnow/Wonton/releases">下载 Release</a>
+</p>
+
+</div>
+
+---
+
+## 📸 界面预览
+
+> 截图中的 Google 邮箱与示例数据均已做脱敏处理。
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/main-light.png" alt="Wonton 浅色模式主界面" />
+      <br />
+      <sub><b>浅色模式</b> · 顶栏版本标识、统一工具栏与多账号额度池</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/main-dark.png" alt="Wonton 深色模式主界面" />
+      <br />
+      <sub><b>深色模式</b> · 自动跟随系统外观或手动切换</sub>
+    </td>
+  </tr>
+</table>
+
+<div align="center">
+  <img src="docs/screenshots/about-dialog.png" alt="Wonton 关于与检查更新弹窗" width="76%" />
+  <br />
+  <sub><b>关于与更新检测</b> · 查看版本信息、检测 GitHub Releases 新版本并一键跳转下载</sub>
 </div>
 
 ---
 
 ## ✨ 核心特性
 
-- **多账号一目了然**
-  - 实时展示每个账号的订阅等级（`ULTRA` / `PRO` / `FREE` / `ENTERPRISE`）及各模型剩余额度百分比、进度条与重置倒计时。
-  - 支持拖拽排序，按你的使用习惯自由排列账号卡片；内置浅色 / 深色主题，自动跟随系统外观。
-- **三种账号导入方式**
-  - **网页授权**：在浏览器完成 Google OAuth 登录，通过本地回环端口自动接收回调并立即拉取额度。
-  - **手动 Token**：粘贴单个或多个 `refresh_token`（支持纯文本按行分隔或 JSON 数组批量导入）。
-  - **本机导入**：直接读取本机已登录 Antigravity 客户端的 `state.vscdb`，自动提取 `refresh_token`（Windows）。
-- **进程级独立代理**
-  - 支持 `HTTP` / `SOCKS5` 代理配置并本地持久化。
-  - 一键**切换账号并启动 Antigravity**：代理仅作用于该次启动的进程树，**不修改系统代理、不安装虚拟网卡**。
-  - Wonton 自身的网络请求（OAuth 换取 Token、刷新凭证、拉取额度等）也全部直连所配代理（自建 CONNECT 隧道 + TLS），不受系统代理干扰。
-- **企业版（GCP）客户端支持**
-  - 添加账号时可勾选「使用企业版（GCP）客户端」，系统会记住每个 `refresh_token` 对应的 client 类型。
-- **纯原生体验**
-  - 全 Rust 编写，启动迅速、内存占用低，支持系统托盘常驻与快速操作。
+- **📊 多账号额度一目了然**
+  - 实时展示账号订阅等级（`ULTRA` / `PRO` / `FREE`）与各模型池（`Gemini`、`Claude / GPT`、`Gemini Argon`）的 **5 小时（5H）** 与 **周（周）** 剩余额度百分比、阈值告警色与重置倒计时。
+  - 支持卡片**拖拽排序**与顺序持久化，内置 **跟随系统 / 浅色 / 深色** 三种外观模式。
+- **🔑 多种账号导入与导出**
+  - **网页授权**：在浏览器完成 Google OAuth 登录，通过本地回环端口自动接收回调并立即刷新额度。
+  - **手动 Token**：粘贴单个或多个 `refresh_token`（支持纯文本或 JSON 数组）。
+  - **本机导入**：直接读取本机已登录 Antigravity 客户端的 `state.vscdb`，解析 protobuf 自动提取 `refresh_token`（Windows）。
+  - **JSON 批量导入 / 导出**：兼容常见多账号 JSON 导出格式，导入时并发校验令牌并显示实时进度；支持单账号、勾选批量或全量导出。
+- **🌐 进程级独立 HTTP 代理与多端启动**
+  - 支持 `HTTP` 代理开关与主机端口持久化配置，内置一键**代理连通性与延迟测试**。
+  - 顶栏工具区集成 **Antigravity 经典版**、**Antigravity IDE**、**Antigravity CLI (`agy`)** 三个直达启动按钮；账号行支持一键**切换账号凭证并启动对应客户端**。
+  - 代理参数与环境变量仅作用于所启动的子进程树，**不修改系统代理、不安装虚拟网卡**；Wonton 自身的所有网络请求（OAuth、刷新令牌、额度查询、更新检测）均统一走所配代理或直连，并复用连接池与 TLS 会话。
+- **🖥️ 原生桌面体验与版本更新**
+  - 顶栏实时展示当前版本号，提供「关于」界面，支持一键检测 **GitHub Releases** 最新版本并直达发布页下载。
+  - 支持 Windows 系统托盘常驻与快捷菜单（显示窗口 / 全部刷新 / 关于与检查更新 / 关闭行为偏好设置）。
 
 ---
 
 ## 🚀 快速开始
 
-### 环境要求
+### 方式一：下载预编译安装包
+
+前往 [GitHub Releases](https://github.com/Summe-rsnow/Wonton/releases) 下载最新版本的 Windows 安装包（`.exe`）或便携压缩包（`.zip`），解压 / 安装即可使用。
+
+### 方式二：从源码运行与构建
+
+#### 环境要求
 
 - [Rust](https://www.rust-lang.org/tools/install)（Edition 2024）
 - [NSH CLI](https://nsh.dev/docs/installation)（`0.6.0+`）
 
-### 开发与运行
+#### 运行开发版
 
 ```bash
 # 克隆仓库
 git clone https://github.com/Summe-rsnow/Wonton.git
 cd Wonton
 
-# 以本机后端运行（推荐，会加载 nsh.json 与 theme.json 主题配置）
+# 以本机后端运行（推荐，会完整加载 nsh.json 与 theme.json 主题配置）
 nsh run
 ```
 
-> **提示**：直接使用 `cargo run` 也可以启动，但不会读取 `nsh.json` 和 `theme.json`，建议始终使用 `nsh run` 以获得完整的视觉与主题效果。
+> **提示**：直接使用 `cargo run` 也可以启动，但不会读取 `nsh.json` 和 `theme.json`，建议始终使用 `nsh run` 以获得完整的原生窗口与主题效果。
 
-### 检查与测试
+#### 检查、测试与打包
 
 ```bash
-# 代码与类型检查
+# 代码、类型与构建检查
 nsh check
 
-# 运行单元测试与 headless UI 交互测试
+# 运行单元测试、Headless UI 交互测试与集成测试
 nsh test
+
+# 打包 Windows 发行版产物（输出至 .nsh/out/）
+nsh package --target windows
 ```
 
 ---
@@ -73,31 +121,40 @@ nsh test
 
 ```text
 Wonton/
-├── assets/             # 应用图标、Logo 与托盘图标
-├── nsh.json            # 应用元信息、窗口配置、主题与 Rust 入口声明
-├── theme.json          # 浅色 / 深色语义色 Token（含 success / warning / scrim）
+├── assets/                 # 应用图标、Logo 与托盘图标
+├── docs/screenshots/       # README 展示截图（已脱敏）
+├── nsh.json                # 应用元信息、版本号、窗口配置与主题声明
+├── theme.json              # 浅色 / 深色语义色 Token（含 success / warning / scrim）
+├── DESIGN.md               # 设计规范、布局约束与动效清单
 ├── src/
-│   ├── lib.rs          # 根组件 App（#[native_module]）
-│   ├── main.rs         # 二进制入口
-│   ├── shell.rs        # 主界面：顶栏、代理设置、账号列表、拖拽排序与提示层
-│   ├── add_dialog.rs   # 添加账号弹窗（网页授权 / 手动 Token / 本机导入）
-│   ├── store/          # 应用状态管理（mod.rs）与异步网络/启动动作（actions.rs）
-│   ├── google.rs       # OAuth 授权、用户信息与额度查询接口
-│   ├── localdb.rs      # state.vscdb → protobuf 解析 → 提取 refresh_token
-│   ├── launch.rs       # Antigravity 客户端定位与带代理启动
-│   ├── format.rs       # 倒计时与百分比文案格式化
-│   └── ui/             # 样式与基础组件层（button / input / surface / quota / progress）
-└── tests/
-    └── screen.rs       # Headless 端到端界面操作测试
+│   ├── lib.rs              # 根组件 App（#[native_module]）与版本常量
+│   ├── main.rs             # 桌面二进制入口
+│   ├── shell.rs            # 主界面：顶栏、代理与启动工具栏、账号卡片列表
+│   ├── drag_list.rs        # 账号卡片拖拽排序控制器与槽位几何计算
+│   ├── add_dialog.rs       # 添加账号弹窗（网页授权 / 手动 Token / 本机导入）
+│   ├── about_dialog.rs     # 关于界面：版本信息、仓库链接与 GitHub 更新检测
+│   ├── dialogs.rs          # 删除确认、关闭行为询问与批量导入进度弹窗
+│   ├── store/
+│   │   ├── mod.rs          # 全局响应式状态、AEAD 加密存储与卡片视图投影
+│   │   └── actions.rs      # 并发刷新/导入队列、OAuth 回调、代理测试与启动动作
+│   ├── google.rs           # OAuth 授权、额度池汇总与复用连接池的 HTTP 客户端
+│   ├── update.rs           # GitHub Releases API 解析与语义化版本比较
+│   ├── localdb.rs          # state.vscdb protobuf 解析与凭证注入
+│   ├── launch.rs           # Classic / IDE / CLI 客户端定位与进程树代理启动
+│   ├── format.rs           # 倒计时、百分比与导出文件名格式化
+│   └── ui/                 # 应用内基础组件层（button / input / surface / quota / progress / icons）
+├── tests/
+│   └── screen.rs           # Rust Headless 端到端 UI 交互测试
+└── App.test.tsx            # TypeScript 端到端测试入口
 ```
 
 ---
 
 ## ⚠️ 注意事项
 
-1. **额度接口说明**：额度查询调用的是 Google 内部接口（`v1internal:fetchAvailableModels`，按 `daily → sandbox → prod` 顺序尝试），上游接口随时可能变更。
-2. **本地存储**：`refresh_token` 与代理配置等本地状态均通过跨平台 `AES-256-GCM` 加密后保存在本地应用存储目录中，但仍建议妥善保管本机数据目录，切勿随意分享。
-3. **本机导入**：依赖客户端 `state.vscdb` 的内部 protobuf 结构，客户端升级后可能需要同步适配；目前仅 Windows 构建默认链接了 SQLite（`rusqlite`）。
+1. **额度接口说明**：额度与订阅等级查询调用 Google Cloud Code 内部接口（`loadCodeAssist`、`retrieveUserQuotaSummary`、`fetchAvailableModels`，按 `daily → sandbox → prod` 顺序尝试），上游接口随时可能变更。
+2. **本地加密存储**：`refresh_token` 与代理配置等本地状态均通过 `HKDF-SHA256` 派生密钥并使用 `AES-256-GCM` 加密后保存在本地应用存储目录中，但仍请妥善保管本机数据目录，切勿随意分享。
+3. **平台支持范围**：账号列表、OAuth、额度查询与 HTTP 代理适配跨平台设计；客户端进程注入、Windows 凭据写入及 `state.vscdb`（`rusqlite`）读写当前主要针对 Windows 环境。
 
 ---
 

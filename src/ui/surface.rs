@@ -1,10 +1,10 @@
 //! Surfaces and the small pieces every screen repeats: the card an account
 //! sits on, a section heading, a hairline, the empty state and the notice.
 
-use nsh_base::theme;
+use nsh_base::{dialog, theme};
 use nsh_core::prelude::*;
 
-use super::{icon_action, icons, radius, IconKind, ValueTone};
+use super::{color, icon_action, icons, radius, IconKind, ValueTone};
 
 /// A grouped surface: one hairline boundary, no shadow. The base surface stays
 /// flat, so elevation is not spent on cards.
@@ -80,7 +80,7 @@ pub(crate) fn notice_toast(
         .child(icon_action(IconKind::Subtle, icons::CLOSE, "关闭提示", on_close))
 }
 
-/// A compact pill naming an account's subscription tier (`ULTRA`, `PRO`, `FREE`, `ENTERPRISE`).
+/// A compact pill naming an account's subscription tier (`ULTRA`, `PRO`, `FREE`).
 pub(crate) fn tier_badge(
     tier: impl Fn() -> crate::google::AccountTier + Copy + 'static,
 ) -> impl IntoElement {
@@ -89,13 +89,12 @@ pub(crate) fn tier_badge(
     let fg = move || match tier() {
         AccountTier::Ultra => theme().primary,
         AccountTier::Pro => super::color("warning"),
-        AccountTier::Enterprise => theme().foreground,
         AccountTier::Free => theme().muted_foreground,
     };
     let bg = move || match tier() {
         AccountTier::Ultra => theme().primary.opacity(0.16),
         AccountTier::Pro => super::color("warning").opacity(0.16),
-        AccountTier::Enterprise | AccountTier::Free => theme().muted,
+        AccountTier::Free => theme().muted,
     };
     view()
         .px_2()
@@ -110,4 +109,58 @@ pub(crate) fn tier_badge(
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(fg),
         )
+}
+
+/// Shared modal dialog frame: theme scrim backdrop + centered card with
+/// consistent border, radius, elevation, and entrance motion.
+pub(crate) fn modal_dialog(
+    max_width: f32,
+    on_cancel: impl Fn() + 'static,
+    content: impl IntoElement,
+) -> impl IntoElement {
+    let enter = motion().entering(MotionPreset::FadeInUp);
+    let card_view = view()
+        .bind_motion(&enter)
+        .w_full()
+        .max_w(px(max_width))
+        .mx_4()
+        .gap_4()
+        .p_6()
+        .rounded(theme().radius)
+        .border_1()
+        .border_color(move || theme().border)
+        .bg(move || theme().card)
+        .shadow_lg()
+        .child(content);
+
+    dialog()
+        .on_cancel(on_cancel)
+        .flex_1()
+        .items_center()
+        .justify_center()
+        .bg(move || color("scrim"))
+        .child(card_view)
+}
+
+/// Non-dismissible modal dialog frame for in-flight progress (e.g. batch import).
+pub(crate) fn progress_modal_dialog(max_width: f32, content: impl IntoElement) -> impl IntoElement {
+    let card_view = view()
+        .w_full()
+        .max_w(px(max_width))
+        .mx_4()
+        .gap_4()
+        .p_6()
+        .rounded(theme().radius)
+        .border_1()
+        .border_color(move || theme().border)
+        .bg(move || theme().card)
+        .shadow_lg()
+        .child(content);
+
+    dialog()
+        .flex_1()
+        .items_center()
+        .justify_center()
+        .bg(move || color("scrim"))
+        .child(card_view)
 }

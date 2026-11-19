@@ -1,7 +1,10 @@
 //! Wonton: Antigravity accounts and their quotas on one screen, and the proxy
 //! the client starts behind. `nsh.json` `"root"` names [`App`].
 
+mod about_dialog;
 mod add_dialog;
+mod dialogs;
+mod drag_list;
 mod format;
 mod google;
 mod launch;
@@ -9,11 +12,14 @@ mod localdb;
 mod shell;
 mod store;
 mod ui;
+mod update;
 
 use nsh_base::theme;
 use nsh_core::desktop::{TitleBarOptions, TitleBarStyle, WindowAttributes};
 use nsh_core::element::desktop::current_window;
 use nsh_core::prelude::*;
+
+pub(crate) const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// The app's UI set (`nsh.json` `"rust"`).
 #[native_module("wonton/native")]

@@ -4,13 +4,12 @@
 //! reports when to close and the screen owns that state. Its fields are
 //! signals of this component, disposed with it when the dialog closes.
 
-use nsh_base::{dialog, input, tab, tabs, theme};
+use nsh_base::{input, tab, tabs, theme};
 use nsh_core::element::StyleRefinement;
 use nsh_core::prelude::*;
 
-use crate::google::ClientKind;
 use crate::store;
-use crate::ui::{action, action_disabled, toggle_switch, ButtonKind, ValueTone};
+use crate::ui::{action, action_disabled, modal_dialog, ButtonKind, ValueTone};
 
 /// What the dialog reports: the user asked to close it.
 #[derive(Debug, Clone, PartialEq, Event)]
@@ -31,81 +30,53 @@ enum Tab {
 #[component]
 pub(crate) fn AddDialog(cx: Scope<AddDialogEvent>) -> impl IntoElement {
     let tab_now = signal(Tab::Oauth);
-    let enterprise = signal(false);
     let tokens = signal(String::new());
-    let kind = move || {
-        if enterprise.get() {
-            ClientKind::Enterprise
-        } else {
-            ClientKind::Personal
-        }
-    };
 
-    // The scrim is the dialog's, since `dialog()` paints nothing itself.
-    dialog()
-        .on_cancel(move || {
+    modal_dialog(
+        520.0,
+        move || {
             cx.emit(AddDialogEvent::Close);
-        })
-        .flex_1()
-        .items_center()
-        .justify_center()
-        // A dialog paints nothing itself; the scrim is the app's, from a token
-        // that carries its own alpha.
-        .bg(move || crate::ui::color("scrim"))
-        .child(
-            view()
-                .w_full()
-                .max_w(px(520.0))
-                .mx_4()
-                .gap_4()
-                .p_6()
-                .rounded(theme().radius)
-                .border_1()
-                .border_color(move || theme().border)
-                .bg(move || theme().card)
-                .shadow_lg()
-                .child(
-                    view()
-                        .gap_1()
-                        .child(
-                            text("添加账号")
-                                .text_base()
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(move || theme().foreground),
-                        )
-                        .child(
-                            text("网页授权最省事；也可以粘贴 refresh_token，或直接读本机已登录的账号。")
-                                .text_xs()
-                                .text_color(move || theme().muted_foreground),
-                        ),
-                )
-                .child(tab_row(tab_now))
-                .child(
-                    view()
-                        .min_h(px(132.0))
-                        .gap_3()
-                        .child(when(
-                            move || tab_now.get() == Tab::Oauth,
-                            move || oauth_panel(kind),
-                        ))
-                        .child(when(
-                            move || tab_now.get() == Tab::Token,
-                            move || token_panel(tokens, kind),
-                        ))
-                        .child(when(move || tab_now.get() == Tab::Import, import_panel)),
-                )
-                .child(enterprise_switch(enterprise))
-                .child(notice_line())
-                .child(
-                    view().flex_row().justify_end().child(action(
-                        ButtonKind::Ghost,
-                        "关闭",
-                        move || {
-                            cx.emit(AddDialogEvent::Close);
-                        },
-                    )),
-                ),
-        )
+        },
+        view()
+            .gap_4()
+            .child(
+                view()
+                    .gap_1()
+                    .child(
+                        text("添加账号")
+                            .text_base()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(move || theme().foreground),
+                    )
+                    .child(
+                        text("网页授权最省事；也可以粘贴 refresh_token，或直接读本机已登录的账号。")
+                            .text_xs()
+                            .text_color(move || theme().muted_foreground),
+                    ),
+            )
+            .child(tab_row(tab_now))
+            .child(
+                view()
+                    .min_h(px(132.0))
+                    .gap_3()
+                    .child(when(move || tab_now.get() == Tab::Oauth, oauth_panel))
+                    .child(when(
+                        move || tab_now.get() == Tab::Token,
+                        move || token_panel(tokens),
+                    ))
+                    .child(when(move || tab_now.get() == Tab::Import, import_panel)),
+            )
+            .child(notice_line())
+            .child(
+                view().flex_row().justify_end().child(action(
+                    ButtonKind::Ghost,
+                    "关闭",
+                    move || {
+                        cx.emit(AddDialogEvent::Close);
+                    },
+                )),
+            ),
+    )
 }
 
 fn tab_row(current: Signal<Tab>) -> impl IntoElement {
@@ -145,7 +116,7 @@ fn tab_row(current: Signal<Tab>) -> impl IntoElement {
         .child(item(Tab::Import, "本机导入"))
 }
 
-fn oauth_panel(kind: impl Fn() -> ClientKind + 'static + Copy) -> impl IntoElement {
+fn oauth_panel() -> impl IntoElement {
     view()
         .gap_3()
         .child(
@@ -158,12 +129,12 @@ fn oauth_panel(kind: impl Fn() -> ClientKind + 'static + Copy) -> impl IntoEleme
                 ButtonKind::Primary,
                 move || if store::busy() { "等待授权…" } else { "打开授权页面" },
                 store::busy,
-                move || store::add_account_by_oauth(kind()),
+                store::add_account_by_oauth,
             )),
         )
 }
 
-fn token_panel(tokens: Signal<String>, kind: impl Fn() -> ClientKind + 'static + Copy) -> impl IntoElement {
+fn token_panel(tokens: Signal<String>) -> impl IntoElement {
     view()
         .gap_3()
         .child(
@@ -192,7 +163,7 @@ fn token_panel(tokens: Signal<String>, kind: impl Fn() -> ClientKind + 'static +
                 ButtonKind::Primary,
                 move || if store::busy() { "正在添加…" } else { "添加" },
                 move || store::busy() || tokens.with(|text| text.trim().is_empty()),
-                move || store::add_tokens(tokens.get_untracked(), kind()),
+                move || store::add_tokens(tokens.get_untracked()),
             )),
         )
 }
@@ -213,15 +184,6 @@ fn import_panel() -> impl IntoElement {
                 store::import_local,
             )),
         )
-}
-
-fn enterprise_switch(enterprise: Signal<bool>) -> impl IntoElement {
-    toggle_switch(
-        move || enterprise.get(),
-        "使用企业版（GCP）客户端",
-        Some("使用企业版（GCP）客户端"),
-        move |next| enterprise.set(next),
-    )
 }
 
 /// The store's notice, shown inside the dialog while it is open.

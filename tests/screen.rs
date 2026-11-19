@@ -1,6 +1,6 @@
-//! The screen's flows, with the steps a user takes: the dialog opens on its
-//! first tab, another tab can be chosen, it closes, and saving the proxy
-//! reaches the store.
+//! The screen's flows, with the steps a user takes: version badge, toolbar
+//! layout, add-account dialog (without Enterprise/GCP), about & update dialog,
+//! proxy settings, theme modes, and close behavior.
 
 use std::time::Duration;
 
@@ -13,7 +13,7 @@ const GONE: Duration = Duration::from_secs(5);
 
 fn start() -> Headless {
     let mut config = EngineConfig::new(Root::of::<nsh_app_wonton::App>());
-    config.viewport = size(px(820.0), px(640.0));
+    config.viewport = size(px(860.0), px(640.0));
     config.environment.os = Os::Windows;
     config.environment.idiom = Idiom::Desktop;
     let mut app = Headless::start(config).unwrap();
@@ -22,15 +22,56 @@ fn start() -> Headless {
 }
 
 #[test]
-fn the_add_dialog_opens_on_oauth_and_closes() {
+fn shows_version_and_updated_toolbar_controls() {
+    let app = start();
+    assert!(app.screen().shows("v1.1.0"));
+    for label in [
+        "关于",
+        "导入",
+        "导出",
+        "全部刷新",
+        "添加账号…",
+        "测试",
+        "保存",
+        "启动反重力",
+        "启动 Antigravity IDE",
+        "启动 Antigravity CLI",
+    ] {
+        assert!(
+            app.screen().matches(&format!("role:button[{label}]")).unwrap(),
+            "missing toolbar button: {label}"
+        );
+    }
+}
+
+#[test]
+fn the_add_dialog_opens_on_oauth_without_enterprise_and_closes() {
     let mut app = start();
     app.press("role:button[添加账号…]").unwrap();
     app.wait_for("网页授权").unwrap();
+    assert!(!app.screen().shows("使用企业版（GCP）客户端"));
     app.press("role:tab[手动 Token]").unwrap();
     app.wait_for_gone("打开授权页面", GONE).unwrap();
     app.press("role:button[关闭]").unwrap();
     app.wait_for_gone("网页授权", GONE).unwrap();
     assert!(app.screen().shows("还没有账号"));
+}
+
+#[test]
+fn the_about_dialog_shows_version_links_and_update_check() {
+    let mut app = start();
+    app.press("role:button[关于]").unwrap();
+    app.wait_for("版本更新").unwrap();
+    assert!(app.screen().shows("v1.1.0"));
+    assert!(app.screen().shows("Apache-2.0"));
+    assert!(app.screen().matches("role:button[检测更新]").unwrap());
+    assert!(app.screen().matches("role:link[Summe-rsnow/Wonton]").unwrap());
+    assert!(app
+        .screen()
+        .matches("role:link[打开发布页 (GitHub Releases)]")
+        .unwrap());
+    app.press("role:button[关闭]").unwrap();
+    app.wait_for_gone("版本更新", GONE).unwrap();
 }
 
 #[test]
