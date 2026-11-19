@@ -1,0 +1,60 @@
+{
+  "name": "Wonton",
+  "cssVars": {
+    "theme": {
+      "radius": "0.5rem"
+    },
+    "light": {
+      "background": "#f8fafd",
+      "foreground": "#1f1f1f",
+      "card": "#ffffff",
+      "card-foreground": "#1f1f1f",
+      "popover": "#ffffff",
+      "popover-foreground": "#1f1f1f",
+      "primary": "#1a73e8",
+      "primary-foreground": "#ffffff",
+      "secondary": "#e8eef7",
+      "secondary-foreground": "#1f1f1f",
+      "muted": "#f0f4f9",
+      "muted-foreground": "#444746",
+      "accent": "#d3e3fd",
+      "accent-foreground": "#041e49",
+      "destructive": "#b3261e",
+      "destructive-foreground": "#ffffff",
+      "border": "#dbe3ef",
+      "input": "#c4cfe0",
+      "ring": "#1a73e8",
+      "success": "#146c2e",
+      "warning": "#b06000",
+      "sidebar": "#f0f4f9",
+      "sidebar-foreground": "#1f1f1f",
+      "scrim": "#041e4970"
+    },
+    "dark": {
+      "background": "#0e1117",
+      "foreground": "#e3e3e3",
+      "card": "#151b26",
+      "card-foreground": "#e3e3e3",
+      "popover": "#1b2230",
+      "popover-foreground": "#e3e3e3",
+      "primary": "#8ab4f8",
+      "primary-foreground": "#062e6f",
+      "secondary": "#232d3f",
+      "secondary-foreground": "#e3e3e3",
+      "muted": "#1b2230",
+      "muted-foreground": "#9aa8be",
+      "accent": "#25344d",
+      "accent-foreground": "#d3e3fd",
+      "destructive": "#f28b82",
+      "destructive-foreground": "#0e1117",
+      "border": "#2c374b",
+      "input": "#36445c",
+      "ring": "#8ab4f8",
+      "success": "#6dd58c",
+      "warning": "#fdd663",
+      "sidebar": "#111620",
+      "sidebar-foreground": "#e3e3e3",
+      "scrim": "#000000cc"
+    }
+  }
+}

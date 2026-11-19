@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="164 132 696 696" width="24" height="24">
+  <defs>
+    <clipPath id="bmLeftClip">
+      <path d="M 192 414 C 190 388, 214 380, 246 392 C 354 432, 456 530, 534 652 C 524 684, 516 706, 512 720 C 334 720, 206 598, 192 414 Z"/>
+    </clipPath>
+    <clipPath id="bmRightClip">
+      <path d="M 832 414 C 818 598, 690 720, 512 720 C 492 678, 480 632, 484 590 C 570 492, 680 426, 778 392 C 810 380, 834 388, 832 414 Z"/>
+    </clipPath>
+
+    <linearGradient id="bmPocketGrad" x1="512" y1="432" x2="512" y2="690" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#1e40af"/>
+      <stop offset="100%" stop-color="#3730a3"/>
+    </linearGradient>
+
+    <linearGradient id="bmLeftGrad" x1="196" y1="394" x2="520" y2="718" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#60a5fa"/>
+      <stop offset="48%" stop-color="#2563eb"/>
+      <stop offset="100%" stop-color="#184da8"/>
+    </linearGradient>
+
+    <linearGradient id="bmCreaseAO" x1="504" y1="654" x2="438" y2="634" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#091330" stop-opacity="0.42"/>
+      <stop offset="50%" stop-color="#091330" stop-opacity="0.14"/>
+      <stop offset="100%" stop-color="#091330" stop-opacity="0"/>
+    </linearGradient>
+
+    <linearGradient id="bmRightGrad" x1="826" y1="394" x2="496" y2="718" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#a8c7fa"/>
+      <stop offset="40%" stop-color="#4f8ef7"/>
+      <stop offset="76%" stop-color="#536df2"/>
+      <stop offset="100%" stop-color="#6c5ce7"/>
+    </linearGradient>
+
+    <linearGradient id="bmStarGrad" x1="422" y1="246" x2="602" y2="470" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#60a5fa"/>
+      <stop offset="52%" stop-color="#2563eb"/>
+      <stop offset="100%" stop-color="#7c3aed"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Inner wonton pocket -->
+  <path d="M 244 434 C 344 450, 434 504, 512 504 C 590 504, 680 450, 780 434 C 742 586, 636 694, 512 694 C 388 694, 282 586, 244 434 Z"
+        fill="url(#bmPocketGrad)"/>
+
+  <!-- Left wing + crease AO -->
+  <path d="M 192 414 C 190 388, 214 380, 246 392 C 354 432, 456 530, 534 652 C 524 684, 516 706, 512 720 C 334 720, 206 598, 192 414 Z"
+        fill="url(#bmLeftGrad)"/>
+  <g clip-path="url(#bmLeftClip)">
+    <path d="M 488 574 L 542 724 L 444 724 L 424 584 Z" fill="url(#bmCreaseAO)"/>
+  </g>
+
+  <!-- Right overlapping wing -->
+  <path d="M 832 414 C 818 598, 690 720, 512 720 C 492 678, 480 632, 484 590 C 570 492, 680 426, 778 392 C 810 380, 834 388, 832 414 Z"
+        fill="url(#bmRightGrad)"/>
+
+  <!-- Gemini sparkle star -->
+  <path d="M 512 222 C 520 306, 564 350, 648 358 C 564 366, 520 410, 512 494 C 504 410, 460 366, 376 358 C 460 350, 504 306, 512 222 Z"
+        fill="url(#bmStarGrad)"/>
+</svg>

@@ -1,0 +1,22 @@
+{
+  "name": "Wonton",
+  "id": "com.xcmm.wonton",
+  "version": "1.0.0",
+  "build": 1,
+  "singleInstance": true,
+  "icon": "assets/icon.png",
+  "appearance": "system",
+  "theme": "theme.json",
+  "rust": ".",
+  "root": "App",
+  "window": {
+    "minSize": {
+      "width": 720,
+      "height": 560
+    },
+    "titleBar": {
+      "style": "hidden",
+      "height": 48
+    }
+  }
+}

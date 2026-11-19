@@ -1,0 +1,139 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <!-- Squircle app container clip -->
+    <clipPath id="tileClip">
+      <rect x="64" y="64" width="896" height="896" rx="212"/>
+    </clipPath>
+
+    <!-- Wing clips so top glint & crease occlusion stay razor-clean inside each shape -->
+    <clipPath id="leftWingClip">
+      <path d="M 192 414 C 190 388, 214 380, 246 392 C 354 432, 456 530, 534 652 C 524 684, 516 706, 512 720 C 334 720, 206 598, 192 414 Z"/>
+    </clipPath>
+    <clipPath id="rightWingClip">
+      <path d="M 832 414 C 818 598, 690 720, 512 720 C 492 678, 480 632, 484 590 C 570 492, 680 426, 778 392 C 810 380, 834 388, 832 414 Z"/>
+    </clipPath>
+
+    <!-- Deep Gemini obsidian canvas -->
+    <linearGradient id="tileBg" x1="128" y1="72" x2="896" y2="952" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#161f33"/>
+      <stop offset="52%" stop-color="#0e1320"/>
+      <stop offset="100%" stop-color="#090c14"/>
+    </linearGradient>
+
+    <radialGradient id="topAura" cx="512" cy="356" r="415" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#4285f4" stop-opacity="0.34"/>
+      <stop offset="48%" stop-color="#6366f1" stop-opacity="0.14"/>
+      <stop offset="100%" stop-color="#0e1320" stop-opacity="0"/>
+    </radialGradient>
+
+    <linearGradient id="tileRim" x1="180" y1="64" x2="844" y2="960" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#a8c7fa" stop-opacity="0.28"/>
+      <stop offset="50%" stop-color="#4285f4" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.06"/>
+    </linearGradient>
+
+    <!-- Antigravity soft floor glow -->
+    <radialGradient id="levitateGlow" cx="512" cy="792" r="220" gradientUnits="userSpaceOnUse" gradientTransform="translate(0 712) scale(1 0.1)">
+      <stop offset="0%" stop-color="#60a5fa" stop-opacity="0.44"/>
+      <stop offset="55%" stop-color="#3b82f6" stop-opacity="0.14"/>
+      <stop offset="100%" stop-color="#3b82f6" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Inner wonton pocket with soft bounce reflection -->
+    <linearGradient id="pocketGrad" x1="512" y1="432" x2="512" y2="690" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#1c3b82"/>
+      <stop offset="55%" stop-color="#1a2c62"/>
+      <stop offset="100%" stop-color="#242357"/>
+    </linearGradient>
+    <radialGradient id="pocketBounce" cx="512" cy="456" r="180" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#8ab4f8" stop-opacity="0.34"/>
+      <stop offset="65%" stop-color="#4285f4" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#1a2c62" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Left front wing -->
+    <linearGradient id="leftWingGrad" x1="196" y1="394" x2="520" y2="718" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#8ab4f8"/>
+      <stop offset="45%" stop-color="#2b7de9"/>
+      <stop offset="100%" stop-color="#184da8"/>
+    </linearGradient>
+
+    <!-- Soft diffused ambient occlusion cast onto left wing by overlapping right fold -->
+    <linearGradient id="creaseAO" x1="504" y1="654" x2="438" y2="634" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#060912" stop-opacity="0.46"/>
+      <stop offset="45%" stop-color="#060912" stop-opacity="0.16"/>
+      <stop offset="100%" stop-color="#060912" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Right overlapping wing with cohesive Gemini gradient -->
+    <linearGradient id="rightWingGrad" x1="826" y1="394" x2="496" y2="718" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#b6d2fd"/>
+      <stop offset="36%" stop-color="#5c9cf8"/>
+      <stop offset="72%" stop-color="#536df2"/>
+      <stop offset="100%" stop-color="#6c5ce7"/>
+    </linearGradient>
+
+    <!-- Delicate inner rim highlights -->
+    <linearGradient id="leftRimGrad" x1="204" y1="390" x2="518" y2="626" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#eef5ff" stop-opacity="0.72"/>
+      <stop offset="70%" stop-color="#93c5fd" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#93c5fd" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="rightRimGrad" x1="820" y1="390" x2="486" y2="616" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.78"/>
+      <stop offset="68%" stop-color="#c5d9fc" stop-opacity="0.28"/>
+      <stop offset="100%" stop-color="#a78bfa" stop-opacity="0.04"/>
+    </linearGradient>
+
+    <!-- Gemini 4-point star halo & fill -->
+    <radialGradient id="starHalo" cx="512" cy="358" r="196" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#93c5fd" stop-opacity="0.44"/>
+      <stop offset="50%" stop-color="#8ab4f8" stop-opacity="0.14"/>
+      <stop offset="100%" stop-color="#8ab4f8" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="starGrad" x1="422" y1="246" x2="602" y2="470" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="46%" stop-color="#d7e7fe"/>
+      <stop offset="82%" stop-color="#8ab4f8"/>
+      <stop offset="100%" stop-color="#a78bfa"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Squircle Container -->
+  <g clip-path="url(#tileClip)">
+    <rect x="64" y="64" width="896" height="896" rx="212" fill="url(#tileBg)"/>
+    <circle cx="512" cy="356" r="415" fill="url(#topAura)"/>
+  </g>
+  <rect x="65" y="65" width="894" height="894" rx="211" fill="none" stroke="url(#tileRim)" stroke-width="2.5"/>
+
+  <!-- Antigravity soft shadow -->
+  <ellipse cx="512" cy="792" rx="204" ry="20" fill="url(#levitateGlow)"/>
+
+  <!-- Inner wonton pocket -->
+  <path d="M 244 434 C 344 450, 434 504, 512 504 C 590 504, 680 450, 780 434 C 742 586, 636 694, 512 694 C 388 694, 282 586, 244 434 Z"
+        fill="url(#pocketGrad)"/>
+  <path d="M 244 434 C 344 450, 434 504, 512 504 C 590 504, 680 450, 780 434 C 742 586, 636 694, 512 694 C 388 694, 282 586, 244 434 Z"
+        fill="url(#pocketBounce)"/>
+
+  <!-- Left wing + diffused crease occlusion + subtle inner rim glint -->
+  <path d="M 192 414 C 190 388, 214 380, 246 392 C 354 432, 456 530, 534 652 C 524 684, 516 706, 512 720 C 334 720, 206 598, 192 414 Z"
+        fill="url(#leftWingGrad)"/>
+  <g clip-path="url(#leftWingClip)">
+    <path d="M 488 574 L 542 724 L 444 724 L 424 584 Z" fill="url(#creaseAO)"/>
+    <path d="M 206 388 C 220 386, 234 389, 246 393 C 354 433, 456 531, 534 653"
+          fill="none" stroke="url(#leftRimGrad)" stroke-width="5"/>
+  </g>
+
+  <!-- Right overlapping wonton wing + subtle inner rim glint -->
+  <path d="M 832 414 C 818 598, 690 720, 512 720 C 492 678, 480 632, 484 590 C 570 492, 680 426, 778 392 C 810 380, 834 388, 832 414 Z"
+        fill="url(#rightWingGrad)"/>
+  <g clip-path="url(#rightWingClip)">
+    <path d="M 484 590 C 570 492, 680 426, 778 392 C 794 387, 809 385, 820 388"
+          fill="none" stroke="url(#rightRimGrad)" stroke-width="5"/>
+  </g>
+
+  <!-- Gemini floating 4-point star -->
+  <circle cx="512" cy="358" r="196" fill="url(#starHalo)"/>
+  <path d="M 512 222 C 520 306, 564 350, 648 358 C 564 366, 520 410, 512 494 C 504 410, 460 366, 376 358 C 460 350, 504 306, 512 222 Z"
+        fill="url(#starGrad)"/>
+</svg>
