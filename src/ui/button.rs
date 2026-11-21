@@ -162,6 +162,27 @@ pub(crate) fn icon_action_with_tip<M>(
     disabled: impl Fn() -> bool + 'static,
     on_press: impl Fn() + 'static,
 ) -> impl IntoElement {
+    icon_action_spinning_with_tip(
+        kind,
+        markup,
+        a11y_label,
+        tooltip_label,
+        disabled,
+        || false,
+        on_press,
+    )
+}
+
+/// A non-text vector icon action whose inner icon spins while `spinning` reads true.
+pub(crate) fn icon_action_spinning_with_tip<M>(
+    kind: IconKind,
+    markup: &'static str,
+    a11y_label: impl nsh_core::element::IntoProp<Option<SharedString>, M>,
+    tooltip_label: impl IntoReactive<SharedString>,
+    disabled: impl Fn() -> bool + 'static,
+    spinning: impl Fn() -> bool + Copy + 'static,
+    on_press: impl Fn() + 'static,
+) -> impl IntoElement {
     let size = match kind {
         IconKind::Primary | IconKind::Secondary | IconKind::ToolbarDanger | IconKind::ToolbarLaunch => 30.0,
         IconKind::Launch | IconKind::Subtle | IconKind::Danger => 26.0,
@@ -169,6 +190,14 @@ pub(crate) fn icon_action_with_tip<M>(
     let icon_size = match kind {
         IconKind::Primary | IconKind::Secondary | IconKind::ToolbarDanger | IconKind::ToolbarLaunch => 15.0,
         IconKind::Launch | IconKind::Subtle | IconKind::Danger => 14.0,
+    };
+    let render_icon = move |color_fn: fn() -> AdaptiveColor| {
+        view()
+            .size(px(icon_size))
+            .items_center()
+            .justify_center()
+            .style_when(spinning, |s| s.animate_spin())
+            .child(svg_icon(markup, icon_size, color_fn))
     };
     let base = button()
         .on_press(on_press)
@@ -190,36 +219,36 @@ pub(crate) fn icon_action_with_tip<M>(
             .bg(move || theme().primary)
             .hover(|s| s.opacity(0.9))
             .active(|s| s.opacity(0.85))
-            .child(svg_icon(markup, icon_size, move || theme().primary_foreground)),
+            .child(render_icon(|| theme().primary_foreground)),
         IconKind::Secondary => base
             .border_1()
             .border_color(move || theme().border)
             .bg(move || theme().background)
             .hover(|s| s.bg(move || theme().accent).border_color(move || theme().ring))
             .active(|s| s.bg(move || theme().muted))
-            .child(svg_icon(markup, icon_size, move || theme().foreground)),
+            .child(render_icon(|| theme().foreground)),
         IconKind::ToolbarDanger => base
             .border_1()
             .border_color(move || theme().border)
             .bg(move || theme().background)
             .hover(|s| s.bg(move || theme().accent).border_color(move || theme().destructive))
             .active(|s| s.bg(move || theme().muted))
-            .child(svg_icon(markup, icon_size, move || theme().destructive)),
+            .child(render_icon(|| theme().destructive)),
         IconKind::ToolbarLaunch | IconKind::Launch => base
             .border_1()
             .border_color(move || theme().border)
             .bg(move || theme().secondary)
             .hover(|s| s.bg(move || theme().accent).border_color(move || theme().ring))
             .active(|s| s.bg(move || theme().muted))
-            .child(svg_icon(markup, icon_size, move || theme().foreground)),
+            .child(render_icon(|| theme().foreground)),
         IconKind::Subtle => base
             .hover(|s| s.bg(move || theme().accent))
             .active(|s| s.bg(move || theme().muted))
-            .child(svg_icon(markup, icon_size, move || theme().muted_foreground)),
+            .child(render_icon(|| theme().muted_foreground)),
         IconKind::Danger => base
             .hover(|s| s.bg(move || theme().muted))
             .active(|s| s.bg(move || theme().accent))
-            .child(svg_icon(markup, icon_size, move || theme().destructive)),
+            .child(render_icon(|| theme().destructive)),
     };
 
     view()

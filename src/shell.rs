@@ -19,8 +19,8 @@ use crate::launch::{LaunchTarget, ProxyConfig};
 use crate::store::{self, CloseBehavior, ThemeMode, Tone};
 use crate::ui::{
     card, checkbox, divider, empty_state, hint_tooltip, icon_action, icon_action_disabled,
-    icon_action_with_tip, icons, notice_toast, quota_row, segmented_icon, status_badge,
-    text_field, tier_badge, toggle_switch, IconKind, ValueTone,
+    icon_action_spinning_with_tip, icon_action_with_tip, icons, notice_toast, quota_row,
+    segmented_icon, status_badge, text_field, tier_badge, toggle_switch, IconKind, ValueTone,
 };
 
 #[component]
@@ -396,7 +396,7 @@ fn proxy_bar(
                     || false,
                     move || store::export_accounts_action(None),
                 ))
-                .child(icon_action_with_tip(
+                .child(icon_action_spinning_with_tip(
                     IconKind::Secondary,
                     icons::REFRESH,
                     move || {
@@ -407,7 +407,7 @@ fn proxy_bar(
                         }
                     },
                     move || {
-                        if store::busy() {
+                        if store::is_any_refreshing() || store::busy() {
                             "正在刷新…".to_owned()
                         } else {
                             let count = store::selected_count();
@@ -419,6 +419,7 @@ fn proxy_bar(
                         }
                     },
                     store::busy,
+                    store::is_any_refreshing,
                     store::refresh_selected_or_all,
                 ))
                 .child(icon_action_with_tip(
@@ -759,10 +760,19 @@ fn account_card(
                             "导出这个账号",
                             move || store::export_accounts_action(Some(id)),
                         ))
-                        .child(icon_action(
+                        .child(icon_action_spinning_with_tip(
                             IconKind::Subtle,
                             icons::REFRESH,
                             "刷新这个账号",
+                            move || {
+                                if account.get().is_some_and(|account| account.refreshing) {
+                                    "正在刷新…"
+                                } else {
+                                    "刷新这个账号"
+                                }
+                            },
+                            move || account.get().is_some_and(|account| account.refreshing),
+                            move || account.get().is_some_and(|account| account.refreshing),
                             move || crate::store::refresh_account_now(id),
                         ))
                         .child(icon_action(

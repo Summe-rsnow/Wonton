@@ -153,6 +153,7 @@ pub(crate) struct AccountCardView {
     pub(crate) fetched_at: Option<i64>,
     pub(crate) error: Option<String>,
     pub(crate) needs_login: bool,
+    pub(crate) refreshing: bool,
 }
 
 /// What the notice line under the toolbar says.
@@ -203,6 +204,7 @@ struct State {
     busy: bool,
     proxy_testing: bool,
     switching_account_id: Option<u32>,
+    refreshing_ids: Vec<u32>,
     target: Option<String>,
     selected_ids: Vec<u32>,
     import_progress: Option<ImportProgress>,
@@ -222,6 +224,7 @@ impl Default for State {
             busy: false,
             proxy_testing: false,
             switching_account_id: None,
+            refreshing_ids: Vec::new(),
             target: crate::launch::detect_target().map(|path| path.display().to_string()),
             selected_ids: Vec::new(),
             import_progress: None,
@@ -394,6 +397,7 @@ pub(crate) fn account_by_id(id: u32) -> Option<Account> {
 /// UI-only projection for an account card (tracked where it is read).
 pub(crate) fn account_card_view(id: u32) -> Option<AccountCardView> {
     state().with(|state| {
+        let refreshing = state.refreshing_ids.contains(&id);
         state
             .accounts
             .iter()
@@ -405,6 +409,7 @@ pub(crate) fn account_card_view(id: u32) -> Option<AccountCardView> {
                 fetched_at: account.fetched_at,
                 error: account.error.clone(),
                 needs_login: account.needs_login,
+                refreshing,
             })
     })
 }
@@ -500,6 +505,26 @@ pub(crate) fn switching_account_id() -> Option<u32> {
 
 fn set_switching_account_id(id: Option<u32>) {
     state().update(|state| state.switching_account_id = id);
+}
+
+pub(crate) fn is_account_refreshing(id: u32) -> bool {
+    state().with(|state| state.refreshing_ids.contains(&id))
+}
+
+pub(crate) fn is_any_refreshing() -> bool {
+    state().with(|state| !state.refreshing_ids.is_empty())
+}
+
+pub(crate) fn set_account_refreshing(id: u32, refreshing: bool) {
+    state().update(|state| {
+        if refreshing {
+            if !state.refreshing_ids.contains(&id) {
+                state.refreshing_ids.push(id);
+            }
+        } else {
+            state.refreshing_ids.retain(|existing| *existing != id);
+        }
+    });
 }
 
 pub(crate) fn import_progress() -> Option<ImportProgress> {
@@ -649,6 +674,7 @@ fn remove_accounts_from_state(state: &mut State, ids: &[u32]) -> usize {
     state
         .selected_ids
         .retain(|selected| !ids.contains(selected) && state.accounts.iter().any(|a| a.id == *selected));
+    state.refreshing_ids.retain(|id| !ids.contains(id));
     before.saturating_sub(state.accounts.len())
 }
 
@@ -721,7 +747,26 @@ fn insert_account(email: &str, refresh_token: &str) -> u32 {
 
 fn set_quota(id: u32, snapshot: google::AccountQuotaSnapshot) {
     update_account(id, |account| {
-        account.models = snapshot.models;
+        let mut next_models = snapshot.models;
+        for row in &mut next_models {
+            if let Some(prev) = account.models.iter().find(|m| m.name == row.name) {
+                if !row.is_weekly_only
+                    && row.weekly_remaining.is_none()
+                    && prev.weekly_remaining.is_some()
+                {
+                    row.weekly_remaining = prev.weekly_remaining;
+                    row.weekly_reset = prev.weekly_reset.clone();
+                } else if row.is_weekly_only
+                    && !prev.is_weekly_only
+                    && !row.name.to_lowercase().contains("argon")
+                {
+                    row.remaining = prev.remaining;
+                    row.reset = prev.reset.clone();
+                    row.is_weekly_only = false;
+                }
+            }
+        }
+        account.models = next_models;
         if let Some(tier) = snapshot.tier {
             account.tier = Some(tier);
         }
@@ -775,12 +820,15 @@ fn is_dead_token(error: &str) -> bool {
 /// what the refresh commands do.
 async fn refresh_account(id: u32) {
     let Some(account) = account_by_id(id) else {
+        set_account_refreshing(id, false);
         return;
     };
+    set_account_refreshing(id, true);
     let token = match access_token(&account).await {
         Ok(token) => token,
         Err(error) => {
             set_error(id, error.clone(), is_dead_token(&error));
+            set_account_refreshing(id, false);
             return;
         }
     };
@@ -788,6 +836,7 @@ async fn refresh_account(id: u32) {
         Ok(snapshot) => set_quota(id, snapshot),
         Err(error) => set_error(id, error, false),
     }
+    set_account_refreshing(id, false);
 }
 
 #[cfg(test)]
@@ -940,12 +989,14 @@ mod tests {
             accounts: vec![make(1, "a@b.c"), make(2, "d@e.f"), make(3, "g@h.i")],
             next_id: 4,
             selected_ids: vec![3, 999, 1],
+            refreshing_ids: vec![1, 2],
             ..State::default()
         };
         assert_eq!(filter_selected_account_ids(&state), vec![1, 3]);
         assert_eq!(remove_accounts_from_state(&mut state, &[1, 3]), 2);
         assert_eq!(state.accounts.iter().map(|a| a.id).collect::<Vec<_>>(), vec![2]);
         assert!(state.selected_ids.is_empty());
+        assert_eq!(state.refreshing_ids, vec![2]);
     }
 }
 

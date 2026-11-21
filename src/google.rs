@@ -471,7 +471,7 @@ fn is_pre_gemini3(name: &str) -> bool {
         .any(|ver| lower.contains(ver))
 }
 
-fn extract_claude_version(text: &str) -> Option<(u32, u32)> {
+fn extract_claude_versions(text: &str) -> Vec<(u32, u32)> {
     let lower = text.trim().to_lowercase();
     if !(lower.contains("claude")
         || lower.contains("opus")
@@ -480,8 +480,9 @@ fn extract_claude_version(text: &str) -> Option<(u32, u32)> {
         || lower.contains("fable")
         || lower.contains("mythos"))
     {
-        return None;
+        return Vec::new();
     }
+    let mut out = Vec::new();
     let bytes = lower.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
@@ -501,15 +502,16 @@ fn extract_claude_version(text: &str) -> Option<(u32, u32)> {
                     lower[min_start..i].parse::<u32>(),
                 ) && maj >= 4
                     && min < 20
+                    && !out.contains(&(maj, min))
                 {
-                    return Some((maj, min));
+                    out.push((maj, min));
                 }
             }
         } else {
             i += 1;
         }
     }
-    None
+    out
 }
 
 fn claude_bucket_label<'a>(names: impl IntoIterator<Item = &'a str>) -> String {
@@ -519,10 +521,10 @@ fn claude_bucket_label<'a>(names: impl IntoIterator<Item = &'a str>) -> String {
         if name.to_lowercase().contains("gpt") {
             has_gpt = true;
         }
-        if let Some(ver) = extract_claude_version(name)
-            && !versions.contains(&ver)
-        {
-            versions.push(ver);
+        for ver in extract_claude_versions(name) {
+            if !versions.contains(&ver) {
+                versions.push(ver);
+            }
         }
     }
     versions.sort_by(|a, b| b.cmp(a));
@@ -934,48 +936,65 @@ fn pick_group_windows(
     target: QuotaBucket,
     allow_ultra_argon_fallback: bool,
 ) -> Option<GroupWindows> {
-    let matched = match target {
-        QuotaBucket::Argon => groups.iter().find(|group| is_argon_group(group)).or_else(|| {
-            allow_ultra_argon_fallback.then(|| {
-                groups
-                    .iter()
-                    .find(|group| !is_argon_group(group) && !is_third_party_group(group))
-            })?
-        }),
-        QuotaBucket::Gemini => groups
+    let mut matched_buckets: Vec<&SummaryBucket> = groups
+        .iter()
+        .filter(|group| match target {
+            QuotaBucket::Argon => is_argon_group(group),
+            QuotaBucket::Gemini => !is_argon_group(group) && !is_third_party_group(group),
+            QuotaBucket::ClaudeGpt => !is_argon_group(group) && is_third_party_group(group),
+        })
+        .flat_map(|group| group.buckets.iter())
+        .collect();
+
+    if matched_buckets.is_empty() && target == QuotaBucket::Argon && allow_ultra_argon_fallback {
+        matched_buckets = groups
             .iter()
-            .find(|group| !is_argon_group(group) && !is_third_party_group(group)),
-        QuotaBucket::ClaudeGpt => groups.iter().find(|group| is_third_party_group(group)),
-    }?;
+            .filter(|group| !is_argon_group(group) && !is_third_party_group(group))
+            .flat_map(|group| group.buckets.iter())
+            .collect();
+    }
+    if matched_buckets.is_empty() {
+        return None;
+    }
 
     let is_5h = |b: &SummaryBucket| {
         let win = b.window.to_lowercase();
         let bid = b.bucket_id.to_lowercase();
-        win.contains("5h") || bid.contains("5h") || win.contains("hour") || bid.contains("hour")
+        let dname = b.display_name.to_lowercase();
+        win.contains("5h")
+            || bid.contains("5h")
+            || win.contains("hour")
+            || bid.contains("hour")
+            || dname.contains("5h")
+            || dname.contains("5-hour")
+            || dname.contains("five hour")
     };
     let is_weekly = |b: &SummaryBucket| {
         let win = b.window.to_lowercase();
         let bid = b.bucket_id.to_lowercase();
-        win.contains("week") || bid.contains("week") || win.contains("7d") || bid.contains("7d")
+        let dname = b.display_name.to_lowercase();
+        win.contains("week")
+            || bid.contains("week")
+            || win.contains("7d")
+            || bid.contains("7d")
+            || dname.contains("week")
     };
 
     let five_hour = pick_min_window(
-        matched
-            .buckets
+        matched_buckets
             .iter()
             .filter(|b| is_5h(b))
             .map(|b| (b.remaining_fraction, b.reset_time.clone())),
     );
     let mut weekly = pick_min_window(
-        matched
-            .buckets
+        matched_buckets
             .iter()
             .filter(|b| is_weekly(b))
             .map(|b| (b.remaining_fraction, b.reset_time.clone())),
     );
     let mut five_hour = five_hour;
     if five_hour.is_none() && weekly.is_none()
-        && let Some(first) = matched.buckets.first()
+        && let Some(first) = matched_buckets.first()
     {
         let fallback_val = (first.remaining_fraction, first.reset_time.clone());
         if target == QuotaBucket::Argon {
@@ -1168,13 +1187,8 @@ pub fn build_account_quotas(
                 weekly_reset: w_reset,
                 is_weekly_only: true,
             })
-        } else {
-            let five_h = if has_real_groups {
-                group_5h
-            } else {
-                model_val
-            };
-            match (five_h, group_weekly) {
+        } else if has_real_groups {
+            match (group_5h, group_weekly) {
                 (Some((h_rem, h_reset)), w) => Some(ModelQuota {
                     name: label.to_owned(),
                     remaining: h_rem,
@@ -1193,6 +1207,35 @@ pub fn build_account_quotas(
                 }),
                 (None, None) => None,
             }
+        } else {
+            model_val.map(|(m_rem, m_reset)| {
+                let is_weekly_window = m_reset
+                    .as_deref()
+                    .and_then(crate::format::parse_rfc3339)
+                    .is_some_and(|reset_ms| {
+                        let now_ms = nsh_core::time::unix_ms() as i64;
+                        reset_ms - now_ms > 6 * 3_600_000
+                    });
+                if is_weekly_window {
+                    ModelQuota {
+                        name: label.to_owned(),
+                        remaining: m_rem,
+                        reset: m_reset.clone(),
+                        weekly_remaining: Some(m_rem),
+                        weekly_reset: m_reset,
+                        is_weekly_only: true,
+                    }
+                } else {
+                    ModelQuota {
+                        name: label.to_owned(),
+                        remaining: m_rem,
+                        reset: m_reset,
+                        weekly_remaining: None,
+                        weekly_reset: None,
+                        is_weekly_only: false,
+                    }
+                }
+            })
         };
 
         if let Some(row) = resolved {
@@ -1204,6 +1247,14 @@ pub fn build_account_quotas(
     out.extend(others);
 
     Ok(AccountQuotaSnapshot { tier: effective_tier, models: out })
+}
+
+fn is_retryable_io_error(error: &str) -> bool {
+    let lower = error.to_lowercase();
+    lower.contains("unexpected end of file")
+        || lower.contains("connection reset")
+        || lower.contains("broken pipe")
+        || lower.contains("connection aborted")
 }
 
 /// Calls a Cloud Code internal endpoint synchronously in `QUOTA_HOSTS` order.
@@ -1221,18 +1272,30 @@ fn post_cloudcode_sync(
     let mut last_error = String::new();
     for host in QUOTA_HOSTS {
         let url = format!("{host}{path}");
-        let (status, text) = match request("POST", &url, &headers, Some(body), proxy) {
-            Ok(response) => response,
-            Err(error) => {
-                last_error = error;
-                continue;
+        for attempt in 0..2 {
+            if attempt > 0 {
+                std::thread::sleep(Duration::from_millis(120));
             }
-        };
-        if !(200..300).contains(&status) {
-            last_error = format!("HTTP {status}");
-            continue;
+            let (status, text) = match request("POST", &url, &headers, Some(body), proxy) {
+                Ok(response) => response,
+                Err(error) => {
+                    let retryable = attempt == 0 && is_retryable_io_error(&error);
+                    last_error = error;
+                    if retryable {
+                        continue;
+                    }
+                    break;
+                }
+            };
+            if !(200..300).contains(&status) {
+                last_error = format!("HTTP {status}");
+                if attempt == 0 && status >= 500 {
+                    continue;
+                }
+                break;
+            }
+            return Ok(text);
         }
-        return Ok(text);
     }
     Err(if last_error.is_empty() {
         "额度接口全部失败".to_owned()
@@ -1287,13 +1350,35 @@ pub async fn quota(
             (summary_res, models_res)
         });
 
-        let summary_groups = match summary_res {
-            Ok(text) => Some(parse_quota_summary(&text)),
+        let mut summary_groups = match summary_res {
+            Ok(text) => {
+                let parsed = parse_quota_summary(&text);
+                (!parsed.is_empty()).then_some(parsed)
+            }
             Err(error) => {
-                log::warn!("retrieveUserQuotaSummary failed: {error}");
+                log::warn!("retrieveUserQuotaSummary initial attempt failed: {error}");
                 None
             }
         };
+        if summary_groups.is_none() {
+            std::thread::sleep(Duration::from_millis(150));
+            match post_cloudcode_sync(
+                "/v1internal:retrieveUserQuotaSummary",
+                &token,
+                &summary_payload,
+                &proxy,
+            ) {
+                Ok(text) => {
+                    let parsed = parse_quota_summary(&text);
+                    if !parsed.is_empty() {
+                        summary_groups = Some(parsed);
+                    }
+                }
+                Err(error) => {
+                    log::warn!("retrieveUserQuotaSummary retry failed: {error}");
+                }
+            }
+        }
         let models_body = models_res?;
 
         build_account_quotas(&models_body, summary_groups.as_deref(), detected_tier)
@@ -1367,6 +1452,8 @@ fn cached_agent(proxy_url: Option<&str>, timeout_secs: u64) -> Result<ureq::Agen
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(std::time::Duration::from_secs(timeout_secs)))
         .http_status_as_error(false)
+        .max_idle_connections(0)
+        .max_idle_connections_per_host(0)
         .proxy(proxy_opt)
         .build()
         .into();
@@ -1751,6 +1838,20 @@ mod tests {
             isolated_res.models[0].weekly_reset.as_deref(),
             Some("2026-11-26T06:00:00Z")
         );
+
+        // Reloading already-summarized rows via summarize_quotas preserves both 5H and weekly windows and multi-version labels.
+        let reloaded = summarize_quotas(&pro_with_argon.models);
+        assert_eq!(reloaded.len(), 3);
+        assert_eq!(reloaded[0].name, "Gemini");
+        assert!((reloaded[0].remaining - 0.85).abs() < 1e-4);
+        assert_eq!(reloaded[0].weekly_remaining, Some(0.95));
+        assert_eq!(reloaded[1].name, "Claude 5.5&4.6 / GPT");
+        assert_eq!(reloaded[2].name, "Gemini Argon");
+        assert!(reloaded[2].is_weekly_only);
+        assert_eq!(reloaded[2].weekly_remaining, Some(0.65));
+        assert!(is_retryable_io_error(
+            "经代理 http://127.0.0.1:7890 请求失败：io: unexpected end of file"
+        ));
     }
 }
 

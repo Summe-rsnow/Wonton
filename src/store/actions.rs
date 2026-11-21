@@ -133,6 +133,9 @@ pub(crate) fn refresh_all() {
 
 fn refresh_ids(ids: Vec<u32>, is_selection: bool) {
     let count = ids.len();
+    for &id in &ids {
+        super::set_account_refreshing(id, true);
+    }
     set_busy(true);
     run_concurrent_queue(
         ids,
@@ -438,6 +441,10 @@ pub(crate) fn launch_account_target(id: u32, target: launch::LaunchTarget) {
 
 /// Refreshes one account now, from its own row.
 pub(crate) fn refresh_account_now(id: u32) {
+    if super::is_account_refreshing(id) {
+        return;
+    }
+    super::set_account_refreshing(id, true);
     spawn(async move {
         super::refresh_account(id).await;
     });

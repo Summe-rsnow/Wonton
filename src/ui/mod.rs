@@ -13,7 +13,8 @@ mod surface;
 
 pub(crate) use button::{
     action, action_disabled, external_link, external_link_button, hint_tooltip, icon_action,
-    icon_action_disabled, icon_action_with_tip, segmented_icon, ButtonKind, IconKind,
+    icon_action_disabled, icon_action_spinning_with_tip, icon_action_with_tip, segmented_icon,
+    ButtonKind, IconKind,
 };
 pub(crate) use input::{checkbox, radio_option, text_field, toggle_switch};
 pub(crate) use progress::progress_bar;
