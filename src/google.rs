@@ -987,26 +987,6 @@ fn pick_group_windows(
     Some(GroupWindows { five_hour, weekly })
 }
 
-fn combine_quota(
-    model: Option<(f32, Option<String>)>,
-    group: Option<(f32, Option<String>)>,
-) -> Option<(f32, Option<String>)> {
-    match (model, group) {
-        (Some((m_rem, m_reset)), Some((g_rem, g_reset))) => {
-            if m_rem <= 0.0 {
-                Some((0.0, m_reset.or(g_reset)))
-            } else if g_rem < m_rem {
-                Some((g_rem, g_reset.or(m_reset)))
-            } else {
-                Some((m_rem, m_reset.or(g_reset)))
-            }
-        }
-        (Some(m), None) => Some(m),
-        (None, Some(g)) => Some(g),
-        (None, None) => None,
-    }
-}
-
 fn collect_official_supported_ids(root: &Value) -> std::collections::HashSet<String> {
     let mut ids = std::collections::HashSet::new();
     if let Some(sorts) = root.get("agentModelSorts").and_then(Value::as_array) {
@@ -1148,10 +1128,15 @@ pub fn build_account_quotas(
             Some(w) => (w.five_hour, w.weekly),
             None => (None, None),
         };
+        let has_real_groups = groups.is_some_and(|g| !g.is_empty());
 
         let resolved = if is_free && bucket != QuotaBucket::Argon {
             // Free accounts use weekly quotas only (no 5H rolling window).
-            let weekly = combine_quota(model_val, group_weekly.or(group_5h));
+            let weekly = if has_real_groups {
+                group_weekly.or(group_5h)
+            } else {
+                model_val
+            };
             weekly.map(|(w_rem, w_reset)| ModelQuota {
                 name: label.to_owned(),
                 remaining: w_rem,
@@ -1162,7 +1147,12 @@ pub fn build_account_quotas(
             })
         } else if bucket == QuotaBucket::Argon {
             // Argon has a weekly quota window only (no 5H window).
-            let weekly = combine_quota(model_val, group_weekly.or(group_5h)).or_else(|| {
+            let weekly = if has_real_groups {
+                group_weekly.or(group_5h)
+            } else {
+                model_val
+            }
+            .or_else(|| {
                 allow_ultra.then(|| {
                     groups
                         .and_then(|g| pick_group_windows(g, QuotaBucket::Gemini, false))
@@ -1179,7 +1169,11 @@ pub fn build_account_quotas(
                 is_weekly_only: true,
             })
         } else {
-            let five_h = combine_quota(model_val, group_5h);
+            let five_h = if has_real_groups {
+                group_5h
+            } else {
+                model_val
+            };
             match (five_h, group_weekly) {
                 (Some((h_rem, h_reset)), w) => Some(ModelQuota {
                     name: label.to_owned(),
@@ -1712,6 +1706,51 @@ mod tests {
         assert!((ultra_res.models[2].remaining - 0.95).abs() < 1e-4);
         assert_eq!(ultra_res.models[2].weekly_remaining, Some(0.95));
         assert!(ultra_res.models[2].is_weekly_only);
+
+        // When retrieveUserQuotaSummary provides real 5H and weekly buckets (e.g. 5H=100%/5h, weekly=21%/4d18h),
+        // fetchAvailableModels's combined min quotaInfo (which reports weekly 21%/4d18h when weekly < 5H)
+        // must NEVER pollute or overwrite the 5H window!
+        let polluted_models_json = r#"{
+            "models": {
+                "gemini-3.1-pro-high": {
+                    "displayName": "Gemini 3.1 Pro (High)",
+                    "quotaInfo": {"remainingFraction": 0.21, "resetTime": "2026-11-26T06:00:00Z"}
+                },
+                "claude-opus-5-5-high": {
+                    "displayName": "Claude Opus 5.5 (High)",
+                    "quotaInfo": {"remainingFraction": 0.26, "resetTime": "2026-11-21T12:45:00Z"}
+                }
+            }
+        }"#;
+        let real_groups_json = r#"{
+            "groups": [
+                {"displayName":"Gemini","buckets":[
+                    {"bucketId":"gemini-5h","window":"5h","remainingFraction":1.0,"resetTime":"2026-11-21T17:00:00Z"},
+                    {"bucketId":"gemini-weekly","window":"weekly","remainingFraction":0.21,"resetTime":"2026-11-26T06:00:00Z"}
+                ]},
+                {"displayName":"Claude and GPT","buckets":[
+                    {"bucketId":"3p-5h","window":"5h","remainingFraction":0.26,"resetTime":"2026-11-21T12:45:00Z"},
+                    {"bucketId":"3p-weekly","window":"weekly","remainingFraction":0.63,"resetTime":"2026-11-28T07:00:00Z"}
+                ]}
+            ]
+        }"#;
+        let real_groups = parse_quota_summary(real_groups_json);
+        let isolated_res = build_account_quotas(
+            polluted_models_json,
+            Some(&real_groups),
+            Some(AccountTier::Pro),
+        )
+        .expect("isolated 5h vs weekly");
+        assert!((isolated_res.models[0].remaining - 1.0).abs() < 1e-4);
+        assert_eq!(
+            isolated_res.models[0].reset.as_deref(),
+            Some("2026-11-21T17:00:00Z")
+        );
+        assert_eq!(isolated_res.models[0].weekly_remaining, Some(0.21));
+        assert_eq!(
+            isolated_res.models[0].weekly_reset.as_deref(),
+            Some("2026-11-26T06:00:00Z")
+        );
     }
 }
 
