@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use bento::drag_list::DragList;
 use bento::shell::{
-    bind_close_handler, close_behavior_submenu, confirm_close_dialog, theme_mode_segmented,
-    NoticeCenter,
+    about_icon_button, bind_close_handler, close_behavior_submenu, confirm_close_dialog,
+    theme_mode_segmented, title_bar_brand, NoticeCenter,
 };
 use nsh_base::theme;
 use nsh_core::Cursor;
@@ -138,33 +138,7 @@ fn header(about_dialog_open: Signal<bool>) -> impl IntoElement {
         .pr(move || px(title_bar().right.0 + 16.0))
         .border_b_1()
         .border_color(move || theme().border)
-        .child(
-            view()
-                .flex_shrink_0()
-                .flex_row()
-                .items_center()
-                .gap_2()
-                .child(icons::brand_mark(20.0))
-                .child(
-                    text("Wonton")
-                        .text_sm()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(move || theme().foreground),
-                )
-                .child(
-                    view()
-                        .px(px(6.0))
-                        .py(px(2.0))
-                        .rounded(px(6.0))
-                        .bg(move || theme().muted)
-                        .child(
-                            text(format!("v{}", crate::APP_VERSION))
-                                .text_xs()
-                                .tabular_nums()
-                                .text_color(move || theme().muted_foreground),
-                        ),
-                ),
-        )
+        .child(title_bar_brand(crate::APP_META))
         .child(
             text("Antigravity 账号与额度")
                 .min_w(px(0.0))
@@ -186,34 +160,14 @@ fn header(about_dialog_open: Signal<bool>) -> impl IntoElement {
                     store::set_theme_mode,
                 ))
                 .child(toolbar_separator())
-                .child(
-                    view()
-                        .relative()
-                        .child(icon_action_with_tip(
-                            IconKind::Secondary,
-                            icons::INFO,
-                            "关于",
-                            move || match store::available_update() {
-                                Some(info) => format!("关于与更新（发现新版本 v{}）", info.version),
-                                None => format!("关于 Wonton v{}", crate::APP_VERSION),
-                            },
-                            || false,
-                            move || {
-                                store::clear_notice();
-                                about_dialog_open.set(true);
-                            },
-                        ))
-                        .child(when(move || store::available_update().is_some(), || {
-                            view()
-                                .absolute()
-                                .top(px(-2.0))
-                                .right(px(-2.0))
-                                .w(px(8.0))
-                                .h(px(8.0))
-                                .rounded_full()
-                                .bg(move || theme().primary)
-                        })),
-                ),
+                .child(about_icon_button(
+                    crate::APP_META,
+                    move || store::available_update().map(|u| u.version),
+                    move || {
+                        store::clear_notice();
+                        about_dialog_open.set(true);
+                    },
+                )),
         )
 }
 

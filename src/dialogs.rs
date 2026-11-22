@@ -5,7 +5,7 @@ use nsh_base::theme;
 use nsh_core::prelude::*;
 
 use crate::store;
-use crate::ui::{action, modal_dialog, progress_bar, progress_modal_dialog, ButtonKind};
+use crate::ui::{confirm_dialog, progress_bar, progress_modal_dialog, ButtonKind};
 
 pub(crate) fn confirm_delete_dialog(pending_delete: Signal<Option<Vec<u32>>>) -> impl IntoElement {
     let title = move || {
@@ -45,34 +45,17 @@ pub(crate) fn confirm_delete_dialog(pending_delete: Signal<Option<Vec<u32>>>) ->
         }
     };
 
-    modal_dialog(
+    confirm_dialog(
         380.0,
+        false,
+        title,
+        description,
+        None,
+        "取消",
+        "确认删除",
+        ButtonKind::Destructive,
         close,
-        view()
-            .gap_4()
-            .child(
-                view()
-                    .gap_1()
-                    .child(
-                        text(title)
-                            .text_base()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(move || theme().foreground),
-                    )
-                    .child(
-                        text(description)
-                            .text_xs()
-                            .text_color(move || theme().muted_foreground),
-                    ),
-            )
-            .child(
-                view()
-                    .flex_row()
-                    .justify_end()
-                    .gap_2()
-                    .child(action(ButtonKind::Secondary, "取消", close))
-                    .child(action(ButtonKind::Destructive, "确认删除", confirm)),
-            ),
+        confirm,
     )
 }
 

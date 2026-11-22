@@ -7,12 +7,12 @@
 **专为 Antigravity 打造的进程级独立代理与多账号额度管理工具**
 
 无需修改系统代理、无需安装虚拟网卡（TUN），在进程级为 Antigravity 注入独立 HTTP 代理并一键启动，同时在一个原生窗口内完成多账号管理、实时模型额度监控与账号凭证切换。  
-基于 **Rust + [NSH](https://github.com/longbridge/nsh)** 构建，纯原生渲染，无 JavaScript 运行时开销。
+基于 **Rust + [NSH](https://github.com/longbridge/nsh) + [Bento](https://github.com/Summe-rsnow/Bento) `v1.0.0`** 构建，纯原生渲染，无 JavaScript 运行时开销。
 
 <p>
-  <a href="https://github.com/Summe-rsnow/Wonton/releases"><img src="https://img.shields.io/badge/Version-v1.2.0-1a73e8?style=flat-square" alt="Version v1.2.0" /></a>
+  <a href="https://github.com/Summe-rsnow/Wonton/releases"><img src="https://img.shields.io/badge/Version-v1.2.1-1a73e8?style=flat-square" alt="Version v1.2.1" /></a>
   <img src="https://img.shields.io/badge/Rust-2024-orange?style=flat-square&logo=rust" alt="Rust 2024" />
-  <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-0ea5e9?style=flat-square" alt="Platforms" />
+  <img src="https://img.shields.io/badge/Platform-Windows-0ea5e9?style=flat-square" alt="Platform Windows" />
   <img src="https://img.shields.io/badge/UI-NSH%20Native-6366f1?style=flat-square" alt="UI NSH Native" />
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache--2.0-146c2e?style=flat-square" alt="License Apache-2.0" /></a>
 </p>
@@ -23,6 +23,7 @@
   <a href="#-核心特性">核心特性</a> ·
   <a href="#-快速开始">快速开始</a> ·
   <a href="#-项目结构">项目结构</a> ·
+  <a href="#-家族工具集">家族工具集</a> ·
   <a href="https://github.com/Summe-rsnow/Wonton/releases">下载 Release</a>
 </p>
 
@@ -131,32 +132,45 @@ nsh package --target windows
 
 ```text
 Wonton/
-├── assets/                 # 应用图标、Logo 与托盘图标
+├── .github/workflows/
+│   └── release.yml         # Tag 推送自动构建并发布 GitHub Release 工作流
+├── assets/                 # 应用图标、Logo、品牌标与 64×64 托盘图标
 ├── docs/screenshots/       # README 展示截图（已脱敏）
-├── nsh.json                # 应用元信息、版本号、窗口配置与主题声明
+├── nsh.json                # 应用元信息、版本号（1.2.1）、窗口配置与主题声明
 ├── theme.json              # 浅色 / 深色语义色 Token（含 success / warning / scrim）
 ├── DESIGN.md               # 设计规范、布局约束与动效清单
 ├── src/
-│   ├── lib.rs              # 根组件 App（#[native_module]）与版本常量
+│   ├── lib.rs              # 根组件 App（#[native_module]）与 APP_META 常量
 │   ├── main.rs             # 桌面二进制入口
 │   ├── shell.rs            # 主界面：顶栏、代理与启动工具栏、账号卡片列表
-│   ├── drag_list.rs        # 账号卡片拖拽排序控制器与槽位几何计算
 │   ├── add_dialog.rs       # 添加账号弹窗（网页授权 / 手动 Token / 本机导入）
-│   ├── about_dialog.rs     # 关于界面：版本信息、仓库链接与 GitHub 更新检测
-│   ├── dialogs.rs          # 删除确认、关闭行为询问与批量导入进度弹窗
+│   ├── dialogs.rs          # 删除确认与批量导入进度弹窗（关闭询问与关于弹窗复用 Bento）
 │   ├── store/
 │   │   ├── mod.rs          # 全局响应式状态、AEAD 加密存储与卡片视图投影
 │   │   └── actions.rs      # 并发刷新/导入队列、OAuth 回调、代理测试与启动动作
 │   ├── google.rs           # OAuth 授权、额度池汇总与复用连接池的 HTTP 客户端
-│   ├── update.rs           # GitHub Releases API 解析与语义化版本比较
 │   ├── localdb.rs          # state.vscdb protobuf 解析与凭证注入
 │   ├── launch.rs           # Classic / IDE / CLI 客户端定位与进程树代理启动
 │   ├── format.rs           # 倒计时、百分比与导出文件名格式化
-│   └── ui/                 # 应用内基础组件层（button / input / surface / quota / progress / icons）
+│   └── ui/
+│       ├── mod.rs          # 统一导出 bento::ui 与 Wonton 专属组件
+│       ├── icons.rs        # 复用 bento::ui::icons，托管 Wonton 品牌标与托盘图标
+│       ├── quota.rs        # 模型额度池进度条与 5H / 周窗口展示组件
+│       └── surface.rs      # 订阅等级徽标（tier_badge）
 ├── tests/
 │   └── screen.rs           # Rust Headless 端到端 UI 交互测试
 └── App.test.tsx            # TypeScript 端到端测试入口
 ```
+
+---
+
+## 🍱 家族工具集
+
+| 工具 | 当前版本 | 仓库地址 | 定位与职责 |
+|---|---|---|---|
+| **Bento** | `v1.0.0` | [Summe-rsnow/Bento](https://github.com/Summe-rsnow/Bento) | 共享原生 UI 组件库、统一 24×24 图标库与桌面壳基础设施 |
+| **Wonton** | `v1.2.1` | [Summe-rsnow/Wonton](https://github.com/Summe-rsnow/Wonton) | 专为 Antigravity 打造的进程级独立代理与多账号额度管理工具 |
+| **Sundae** | `v1.0.0` | [Summe-rsnow/Sundae](https://github.com/Summe-rsnow/Sundae) | 专为 Windows Scoop 打造的轻快原生桌面软件包管理器 |
 
 ---
 

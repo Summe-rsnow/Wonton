@@ -24,7 +24,7 @@ fn start() -> Headless {
 #[test]
 fn shows_version_and_updated_toolbar_controls() {
     let app = start();
-    assert!(app.screen().shows("v1.2.0"));
+    assert!(app.screen().shows("v1.2.1"));
     for label in [
         "关于",
         "测试",
@@ -68,7 +68,7 @@ fn the_about_dialog_shows_version_links_and_update_check() {
     let mut app = start();
     app.press("role:button[关于]").unwrap();
     app.wait_for("版本更新").unwrap();
-    assert!(app.screen().shows("v1.2.0"));
+    assert!(app.screen().shows("v1.2.1"));
     assert!(app.screen().shows("Apache-2.0"));
     assert!(app.screen().matches("role:button[检测更新]").unwrap());
     assert!(app.screen().matches("role:link[Summe-rsnow/Wonton]").unwrap());
