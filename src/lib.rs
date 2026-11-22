@@ -1,10 +1,8 @@
 //! Wonton: Antigravity accounts and their quotas on one screen, and the proxy
 //! the client starts behind. `nsh.json` `"root"` names [`App`].
 
-mod about_dialog;
 mod add_dialog;
 mod dialogs;
-mod drag_list;
 mod format;
 mod google;
 mod launch;
@@ -12,14 +10,21 @@ mod localdb;
 mod shell;
 mod store;
 mod ui;
-mod update;
 
+use bento::AppMeta;
 use nsh_base::theme;
-use nsh_core::desktop::{TitleBarOptions, TitleBarStyle, WindowAttributes};
-use nsh_core::element::desktop::current_window;
 use nsh_core::prelude::*;
 
 pub(crate) const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+pub(crate) const APP_META: AppMeta = AppMeta {
+    name: "Wonton",
+    version: APP_VERSION,
+    tagline: "轻量、原生的 Antigravity 多账号与额度管理工具",
+    github_repo: "Summe-rsnow/Wonton",
+    license: "Apache-2.0",
+    brand_mark: |size| ui::icons::brand_mark(size).into_element(),
+};
 
 /// The app's UI set (`nsh.json` `"rust"`).
 #[native_module("wonton/native")]
@@ -31,14 +36,7 @@ fn native(registry: &mut Registry) {
 /// accounts are read once, before the screen is built.
 #[component]
 pub fn App() -> impl IntoElement {
-    let mut title_bar = TitleBarOptions::default();
-    title_bar.style = TitleBarStyle::Hidden;
-    title_bar.height = Some(px(48.0));
-    let mut attrs = WindowAttributes::default();
-    attrs.title_bar = Some(title_bar);
-    attrs.min_size = Some(Some(size(px(720.0), px(560.0))));
-    attrs.close_on_press = Some(false);
-    current_window().set(attrs);
+    bento::shell::init_desktop_window(720.0, 560.0, 48.0);
 
     store::load();
     view()

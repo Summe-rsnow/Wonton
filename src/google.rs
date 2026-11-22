@@ -1393,15 +1393,6 @@ const FORM_HEADERS: &[(&str, &str)] = &[
     ("User-Agent", USER_AGENT),
 ];
 
-/// Performs an HTTP GET request through the configured proxy (or directly when disabled).
-pub(crate) async fn http_get(
-    url: &str,
-    headers: &[(&str, &str)],
-    proxy: ProxyConfig,
-) -> Result<(u16, String), String> {
-    send("GET", url.to_owned(), headers, None, proxy).await
-}
-
 /// One request through the proxy the user configured, blocking on the
 /// request: NSH's own `fetch` follows the system proxy, which is exactly
 /// what a user behind a proxy without the system setting does not have.

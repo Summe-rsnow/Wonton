@@ -3,6 +3,11 @@
 
 use std::time::Duration;
 
+use bento::drag_list::DragList;
+use bento::shell::{
+    bind_close_handler, close_behavior_submenu, confirm_close_dialog, theme_mode_segmented,
+    NoticeCenter,
+};
 use nsh_base::theme;
 use nsh_core::Cursor;
 use nsh_core::element::desktop::{
@@ -11,16 +16,15 @@ use nsh_core::element::desktop::{
 use nsh_core::prelude::*;
 use nsh_core::time::unix_ms;
 
-use crate::dialogs::{confirm_close_dialog, confirm_delete_dialog, import_progress_dialog};
-use crate::drag_list::DragList;
+use crate::dialogs::{confirm_delete_dialog, import_progress_dialog};
 use crate::format;
 use crate::google::AccountTier;
 use crate::launch::{LaunchTarget, ProxyConfig};
-use crate::store::{self, CloseBehavior, ThemeMode, Tone};
+use crate::store::{self, Tone};
 use crate::ui::{
     card, checkbox, divider, empty_state, hint_tooltip, icon_action, icon_action_disabled,
-    icon_action_spinning_with_tip, icon_action_with_tip, icons, notice_toast, quota_row,
-    segmented_icon, status_badge, text_field, tier_badge, toggle_switch, IconKind, ValueTone,
+    icon_action_spinning_with_tip, icon_action_with_tip, icons, quota_row, status_badge,
+    text_field, tier_badge, toggle_switch, toolbar_separator, IconKind, ValueTone,
 };
 
 #[component]
@@ -36,30 +40,13 @@ pub(crate) fn Screen() -> impl IntoElement {
     // refresh; one tick a minute is enough for minute-grained text.
     let clock = signal(unix_ms() as i64);
     set_interval(Duration::from_secs(60), move || clock.set(unix_ms() as i64));
-    effect(move || {
-        if let Some(notice) = store::notice() {
-            let seq = store::notice_seq();
-            let ttl = match notice.tone {
-                Tone::Bad => Duration::from_secs(6),
-                _ => Duration::from_secs(3),
-            };
-            let task = set_timeout(ttl, move || store::clear_notice_if_seq(seq));
-            cleanup(move || task.cancel());
-        }
-    });
+    let notices = NoticeCenter::global();
+    notices.install_auto_dismiss();
 
     let main_window = current_window();
-    {
-        let win = main_window.clone();
-        main_window.on_close_press(move |_reason| match store::close_behavior() {
-            CloseBehavior::Ask => {
-                win.focus();
-                close_prompt_open.set(true);
-            }
-            CloseBehavior::Tray => win.hide(),
-            CloseBehavior::Exit => quit(),
-        });
-    }
+    bind_close_handler(main_window.clone(), store::close_behavior, move || {
+        close_prompt_open.set(true);
+    });
     {
         let win_click = main_window.clone();
         let win_menu = main_window.clone();
@@ -91,20 +78,7 @@ pub(crate) fn Screen() -> impl IntoElement {
                             about_dialog_open.set(true);
                         }),
                         MenuItem::separator(),
-                        MenuItem::submenu(
-                            "点击关闭按钮时",
-                            [
-                                MenuItem::new("每次询问")
-                                    .checked(behavior == CloseBehavior::Ask)
-                                    .on_select(|| store::set_close_behavior(CloseBehavior::Ask)),
-                                MenuItem::new("最小化到托盘")
-                                    .checked(behavior == CloseBehavior::Tray)
-                                    .on_select(|| store::set_close_behavior(CloseBehavior::Tray)),
-                                MenuItem::new("直接退出应用")
-                                    .checked(behavior == CloseBehavior::Exit)
-                                    .on_select(|| store::set_close_behavior(CloseBehavior::Exit)),
-                            ],
-                        ),
+                        close_behavior_submenu(behavior, store::set_close_behavior),
                         MenuItem::separator(),
                         MenuItem::new("退出 Wonton").on_select(quit),
                     ]),
@@ -121,28 +95,34 @@ pub(crate) fn Screen() -> impl IntoElement {
         .child(header(about_dialog_open))
         .child(proxy_bar(host, port, add_dialog_open, pending_delete))
         .child(accounts(clock, pending_delete))
-        .child(when(
-            move || {
-                !add_dialog_open.get()
-                    && !about_dialog_open.get()
-                    && pending_delete.get().is_none()
-                    && !close_prompt_open.get()
-                    && store::notice().is_some()
-            },
-            notice_overlay,
-        ))
+        .child(notices.overlay(move || {
+            !add_dialog_open.get()
+                && !about_dialog_open.get()
+                && pending_delete.get().is_none()
+                && !close_prompt_open.get()
+        }))
         .child(when(add_dialog_open, move || {
             crate::add_dialog::add_dialog().on_close(move || add_dialog_open.set(false))
         }))
         .child(when(about_dialog_open, move || {
-            crate::about_dialog::about_dialog().on_close(move || about_dialog_open.set(false))
+            bento::updater::about_dialog(
+                crate::APP_META,
+                store::update_status,
+                store::check_for_updates_action,
+                move || about_dialog_open.set(false),
+            )
         }))
         .child(when(
             move || pending_delete.get().is_some(),
             move || confirm_delete_dialog(pending_delete),
         ))
         .child(when(close_prompt_open, move || {
-            confirm_close_dialog(close_prompt_open, prompt_window.clone())
+            confirm_close_dialog(
+                close_prompt_open,
+                prompt_window.clone(),
+                crate::APP_META.name,
+                store::set_close_behavior,
+            )
         }))
         .child(when(move || store::import_progress().is_some(), import_progress_dialog))
 }
@@ -201,7 +181,10 @@ fn header(about_dialog_open: Signal<bool>) -> impl IntoElement {
                 .flex_row()
                 .items_center()
                 .gap(px(6.0))
-                .child(theme_switcher())
+                .child(theme_mode_segmented(
+                    store::theme_mode,
+                    store::set_theme_mode,
+                ))
                 .child(toolbar_separator())
                 .child(
                     view()
@@ -232,44 +215,6 @@ fn header(about_dialog_open: Signal<bool>) -> impl IntoElement {
                         })),
                 ),
         )
-}
-
-fn toolbar_separator() -> impl IntoElement {
-    view()
-        .w(px(1.0))
-        .h(px(16.0))
-        .mx(px(2.0))
-        .bg(move || theme().border)
-}
-
-fn theme_switcher() -> impl IntoElement {
-    view()
-        .flex_row()
-        .items_center()
-        .gap(px(2.0))
-        .p(px(2.0))
-        .rounded(crate::ui::radius())
-        .border_1()
-        .border_color(move || theme().border)
-        .bg(move || theme().muted)
-        .child(segmented_icon(
-            move || store::theme_mode() == ThemeMode::System,
-            icons::MONITOR,
-            ThemeMode::System.label(),
-            move || store::set_theme_mode(ThemeMode::System),
-        ))
-        .child(segmented_icon(
-            move || store::theme_mode() == ThemeMode::Light,
-            icons::SUN,
-            ThemeMode::Light.label(),
-            move || store::set_theme_mode(ThemeMode::Light),
-        ))
-        .child(segmented_icon(
-            move || store::theme_mode() == ThemeMode::Dark,
-            icons::MOON,
-            ThemeMode::Dark.label(),
-            move || store::set_theme_mode(ThemeMode::Dark),
-        ))
 }
 
 fn proxy_bar(
@@ -479,28 +424,8 @@ fn proxy_bar(
         )
 }
 
-fn notice_overlay() -> impl IntoElement {
-    view()
-        .absolute()
-        .bottom(px(16.0))
-        .left(px(16.0))
-        .right(px(16.0))
-        .items_center()
-        .z_index(10)
-        .pointer_events(PointerEvents::BoxNone)
-        .child(notice_toast(
-            move || store::notice().map(|notice| notice.text).unwrap_or_default(),
-            move || match store::notice().map(|notice| notice.tone) {
-                Some(Tone::Bad) => ValueTone::Bad.color(),
-                Some(Tone::Ok) => ValueTone::Ok.color(),
-                _ => theme().muted_foreground,
-            },
-            store::clear_notice,
-        ))
-}
-
 fn accounts(clock: Signal<i64>, pending_delete: Signal<Option<Vec<u32>>>) -> impl IntoElement {
-    let drag = DragList::new();
+    let drag = DragList::new(store::account_ids, store::reorder_account);
 
     view()
         .flex_1()

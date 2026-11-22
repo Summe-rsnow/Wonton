@@ -26,8 +26,15 @@
       "ring": "#1a73e8",
       "success": "#146c2e",
       "warning": "#b06000",
+      "info": "#0b57d0",
       "sidebar": "#f0f4f9",
       "sidebar-foreground": "#1f1f1f",
+      "sidebar-border": "#dbe3ef",
+      "sidebar-accent": "#e2ebf8",
+      "sidebar-accent-foreground": "#041e49",
+      "terminal": "#f1f5f9",
+      "terminal-foreground": "#1e293b",
+      "terminal-border": "#cbd5e1",
       "scrim": "#041e4970"
     },
     "dark": {
@@ -52,8 +59,15 @@
       "ring": "#8ab4f8",
       "success": "#6dd58c",
       "warning": "#fdd663",
+      "info": "#7cacf8",
       "sidebar": "#111620",
       "sidebar-foreground": "#e3e3e3",
+      "sidebar-border": "#243044",
+      "sidebar-accent": "#1e293b",
+      "sidebar-accent-foreground": "#e3e3e3",
+      "terminal": "#0b0f17",
+      "terminal-foreground": "#dbe4f0",
+      "terminal-border": "#243044",
       "scrim": "#000000cc"
     }
   }

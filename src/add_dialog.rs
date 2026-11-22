@@ -4,12 +4,11 @@
 //! reports when to close and the screen owns that state. Its fields are
 //! signals of this component, disposed with it when the dialog closes.
 
-use nsh_base::{input, tab, tabs, theme};
-use nsh_core::element::StyleRefinement;
+use nsh_base::{tab, tabs, theme};
 use nsh_core::prelude::*;
 
 use crate::store;
-use crate::ui::{action, action_disabled, modal_dialog, ButtonKind, ValueTone};
+use crate::ui::{action, action_disabled, modal_dialog, textarea, ButtonKind, ValueTone};
 
 /// What the dialog reports: the user asked to close it.
 #[derive(Debug, Clone, PartialEq, Event)]
@@ -142,22 +141,11 @@ fn token_panel(tokens: Signal<String>) -> impl IntoElement {
                 .text_xs()
                 .text_color(move || theme().muted_foreground),
         )
-        .child(
-            input()
-                .value(move || tokens.get())
-                .on_change(move |text: &str| tokens.set(text.to_owned()))
-                .multiline(true)
-                .h(px(96.0))
-                .p_2()
-                .text_xs()
-                .rounded(theme().radius)
-                .border_1()
-                .border_color(move || theme().input)
-                .bg(move || theme().background)
-                .text_color(move || theme().foreground)
-                .placeholder(r#"1//0g…   或   [{"refresh_token":"1//0g…"}]"#)
-                .focus(|s: StyleRefinement| s.border_color(move || theme().ring)),
-        )
+        .child(textarea(
+            move || tokens.get(),
+            r#"1//0g…   或   [{"refresh_token":"1//0g…"}]"#,
+            move |text: &str| tokens.set(text.to_owned()),
+        ))
         .child(
             view()
                 .flex_row()

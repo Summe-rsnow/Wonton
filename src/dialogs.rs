@@ -1,14 +1,11 @@
-//! Auxiliary modal dialogs used by the main screen: delete confirmation,
-//! window-close confirmation, and batch import progress.
+//! Wonton-specific modal dialogs: delete confirmation and batch import progress.
+//! Window-close confirmation and the About dialog are provided by `bento`.
 
 use nsh_base::theme;
-use nsh_core::element::desktop::{quit, WindowRef};
 use nsh_core::prelude::*;
 
-use crate::store::{self, CloseBehavior};
-use crate::ui::{
-    action, checkbox, modal_dialog, progress_bar, progress_modal_dialog, radio_option, ButtonKind,
-};
+use crate::store;
+use crate::ui::{action, modal_dialog, progress_bar, progress_modal_dialog, ButtonKind};
 
 pub(crate) fn confirm_delete_dialog(pending_delete: Signal<Option<Vec<u32>>>) -> impl IntoElement {
     let title = move || {
@@ -75,85 +72,6 @@ pub(crate) fn confirm_delete_dialog(pending_delete: Signal<Option<Vec<u32>>>) ->
                     .gap_2()
                     .child(action(ButtonKind::Secondary, "取消", close))
                     .child(action(ButtonKind::Destructive, "确认删除", confirm)),
-            ),
-    )
-}
-
-pub(crate) fn confirm_close_dialog(
-    close_prompt_open: Signal<bool>,
-    window: WindowRef,
-) -> impl IntoElement {
-    let chosen_tray = signal(true);
-    let remember = signal(false);
-    let cancel = move || close_prompt_open.set(false);
-    let confirm = move || {
-        let to_tray = chosen_tray.get_untracked();
-        let save_choice = remember.get_untracked();
-        close_prompt_open.set(false);
-        if save_choice {
-            store::set_close_behavior(if to_tray {
-                CloseBehavior::Tray
-            } else {
-                CloseBehavior::Exit
-            });
-        }
-        if to_tray {
-            window.hide();
-        } else {
-            quit();
-        }
-    };
-
-    modal_dialog(
-        400.0,
-        cancel,
-        view()
-            .gap_4()
-            .child(
-                view()
-                    .gap_1()
-                    .child(
-                        text("关闭 Wonton")
-                            .text_base()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(move || theme().foreground),
-                    )
-                    .child(
-                        text("点击关闭按钮时希望如何处理？")
-                            .text_xs()
-                            .text_color(move || theme().muted_foreground),
-                    ),
-            )
-            .child(
-                view()
-                    .gap_2()
-                    .child(radio_option(
-                        move || chosen_tray.get(),
-                        "最小化到系统托盘",
-                        "隐藏主窗口，可从右下角托盘图标随时恢复",
-                        move || chosen_tray.set(true),
-                    ))
-                    .child(radio_option(
-                        move || !chosen_tray.get(),
-                        "退出应用",
-                        "完全关闭 Wonton 主窗口及系统托盘",
-                        move || chosen_tray.set(false),
-                    )),
-            )
-            .child(checkbox(
-                move || remember.get(),
-                || false,
-                "不再提示",
-                Some("不再提示（可在托盘右键菜单随时修改）"),
-                move |next| remember.set(next),
-            ))
-            .child(
-                view()
-                    .flex_row()
-                    .justify_end()
-                    .gap_2()
-                    .child(action(ButtonKind::Secondary, "取消", cancel))
-                    .child(action(ButtonKind::Primary, "确定", confirm)),
             ),
     )
 }

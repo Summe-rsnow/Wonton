@@ -22,7 +22,6 @@ use super::{
 };
 use crate::google::{self, ImportEntry};
 use crate::launch;
-use crate::update::{self, UpdateCheckResult};
 
 /// Runs `items` through up to `max_concurrency` staggered async workers,
 /// invoking `on_progress` after each item and `on_done` once the last finishes.
@@ -458,20 +457,9 @@ pub(crate) fn check_for_updates_action() {
     set_update_status(UpdateStatus::Checking);
     spawn(async move {
         let proxy_cfg = proxy();
-        match update::check_latest_release(crate::APP_VERSION, proxy_cfg).await {
-            Ok(UpdateCheckResult::UpToDate { latest }) => {
-                set_update_status(UpdateStatus::UpToDate { latest });
-            }
-            Ok(UpdateCheckResult::Available(info)) => {
-                set_update_status(UpdateStatus::Available(info));
-            }
-            Ok(UpdateCheckResult::NoRelease) => {
-                set_update_status(UpdateStatus::NoRelease);
-            }
-            Err(err) => {
-                set_update_status(UpdateStatus::Error(err));
-            }
-        }
+        let proxy_url = proxy_cfg.enabled.then(|| proxy_cfg.url());
+        let result = bento::updater::check_latest_release(crate::APP_META, proxy_url).await;
+        set_update_status(UpdateStatus::from(result));
     });
 }
 

@@ -17,51 +17,12 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::google::{self, AccountTier, ModelQuota};
 use crate::launch::ProxyConfig;
-use crate::update::ReleaseInfo;
+
+pub(crate) use bento::shell::{CloseBehavior, Notice, NoticeCenter, NoticeTone as Tone, ThemeMode};
+pub(crate) use bento::updater::{ReleaseInfo, UpdateStatus};
 
 const STORAGE_KEY: &str = "wonton.state.v1";
 const ENCRYPTED_PREFIX: &str = "wonton:enc:v1:";
-
-/// User-selected color scheme (`system`, `light`, or `dark`).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub(crate) enum ThemeMode {
-    #[default]
-    System,
-    Light,
-    Dark,
-}
-
-impl ThemeMode {
-    pub(crate) fn to_appearance(self) -> Appearance {
-        match self {
-            Self::System => Appearance::System,
-            Self::Light => Appearance::Light,
-            Self::Dark => Appearance::Dark,
-        }
-    }
-
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            Self::System => "跟随系统",
-            Self::Light => "浅色模式",
-            Self::Dark => "深色模式",
-        }
-    }
-}
-
-/// Action taken when the user clicks the main window's close button.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum CloseBehavior {
-    /// Prompt the user each time (default).
-    #[default]
-    Ask,
-    /// Hide the main window to the system tray.
-    Tray,
-    /// Quit the application cleanly.
-    Exit,
-}
 
 fn default_true() -> bool {
     true
@@ -156,20 +117,6 @@ pub(crate) struct AccountCardView {
     pub(crate) refreshing: bool,
 }
 
-/// What the notice line under the toolbar says.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Tone {
-    Info,
-    Ok,
-    Bad,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Notice {
-    pub(crate) text: String,
-    pub(crate) tone: Tone,
-}
-
 /// Progress of an in-flight batch JSON import.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ImportProgress {
@@ -180,18 +127,6 @@ pub(crate) struct ImportProgress {
     pub(crate) current_email: String,
 }
 
-/// State of checking GitHub Releases for a newer version.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub(crate) enum UpdateStatus {
-    #[default]
-    Idle,
-    Checking,
-    UpToDate { latest: String },
-    Available(ReleaseInfo),
-    NoRelease,
-    Error(String),
-}
-
 #[derive(Debug, Clone, PartialEq)]
 struct State {
     accounts: Vec<Account>,
@@ -199,8 +134,6 @@ struct State {
     proxy: ProxyConfig,
     theme: ThemeMode,
     close_behavior: CloseBehavior,
-    notice: Option<Notice>,
-    notice_seq: u64,
     busy: bool,
     proxy_testing: bool,
     switching_account_id: Option<u32>,
@@ -219,8 +152,6 @@ impl Default for State {
             proxy: ProxyConfig::default(),
             theme: ThemeMode::System,
             close_behavior: CloseBehavior::Ask,
-            notice: None,
-            notice_seq: 0,
             busy: false,
             proxy_testing: false,
             switching_account_id: None,
@@ -455,11 +386,7 @@ pub(crate) fn set_proxy_enabled(enabled: bool) {
 
 /// The notice line, if there is one (tracked where it is read).
 pub(crate) fn notice() -> Option<Notice> {
-    state().with(|state| state.notice.clone())
-}
-
-pub(crate) fn notice_seq() -> u64 {
-    state().with(|state| state.notice_seq)
+    NoticeCenter::global().current()
 }
 
 /// Whether a network operation is running (tracked where it is read).
@@ -468,23 +395,11 @@ pub(crate) fn busy() -> bool {
 }
 
 pub(crate) fn set_notice(text: impl Into<String>, tone: Tone) {
-    let notice = Notice { text: text.into(), tone };
-    state().update(|state| {
-        state.notice = Some(notice);
-        state.notice_seq = state.notice_seq.wrapping_add(1);
-    });
+    NoticeCenter::global().notify(text, tone);
 }
 
 pub(crate) fn clear_notice() {
-    state().update(|state| state.notice = None);
-}
-
-pub(crate) fn clear_notice_if_seq(seq: u64) {
-    state().update(|state| {
-        if state.notice_seq == seq {
-            state.notice = None;
-        }
-    });
+    NoticeCenter::global().clear();
 }
 
 pub(crate) fn set_busy(busy: bool) {
