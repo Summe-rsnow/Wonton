@@ -10,7 +10,7 @@
 基于 **Rust + [NSH](https://github.com/longbridge/nsh)** 构建，纯原生渲染，无 JavaScript 运行时开销。
 
 <p>
-  <a href="https://github.com/Summe-rsnow/Wonton/releases"><img src="https://img.shields.io/badge/Version-v1.1.2-1a73e8?style=flat-square" alt="Version v1.1.2" /></a>
+  <a href="https://github.com/Summe-rsnow/Wonton/releases"><img src="https://img.shields.io/badge/Version-v1.2.0-1a73e8?style=flat-square" alt="Version v1.2.0" /></a>
   <img src="https://img.shields.io/badge/Rust-2024-orange?style=flat-square&logo=rust" alt="Rust 2024" />
   <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-0ea5e9?style=flat-square" alt="Platforms" />
   <img src="https://img.shields.io/badge/UI-NSH%20Native-6366f1?style=flat-square" alt="UI NSH Native" />
