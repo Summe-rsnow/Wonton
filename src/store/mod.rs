@@ -40,6 +40,8 @@ struct Saved {
     theme: ThemeMode,
     #[serde(default)]
     close_behavior: CloseBehavior,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_used_email: Option<String>,
 }
 
 fn deserialize_tier_compat<'de, D>(deserializer: D) -> Result<Option<AccountTier>, D::Error>
@@ -115,6 +117,7 @@ pub(crate) struct AccountCardView {
     pub(crate) error: Option<String>,
     pub(crate) needs_login: bool,
     pub(crate) refreshing: bool,
+    pub(crate) is_last_used: bool,
 }
 
 /// Progress of an in-flight batch JSON import.
@@ -134,6 +137,7 @@ struct State {
     proxy: ProxyConfig,
     theme: ThemeMode,
     close_behavior: CloseBehavior,
+    last_used_email: Option<String>,
     busy: bool,
     proxy_testing: bool,
     switching_account_id: Option<u32>,
@@ -152,6 +156,7 @@ impl Default for State {
             proxy: ProxyConfig::default(),
             theme: ThemeMode::System,
             close_behavior: CloseBehavior::Ask,
+            last_used_email: None,
             busy: false,
             proxy_testing: false,
             switching_account_id: None,
@@ -184,6 +189,10 @@ pub(crate) fn load() {
     };
     let loaded_theme = saved.theme;
     let loaded_close_behavior = saved.close_behavior;
+    let loaded_last_used_email = saved.last_used_email.and_then(|email| {
+        let trimmed = email.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_owned())
+    });
     state().update(|state| {
         for account in saved.accounts {
             let id = state.next_id;
@@ -214,6 +223,7 @@ pub(crate) fn load() {
         };
         state.theme = loaded_theme;
         state.close_behavior = loaded_close_behavior;
+        state.last_used_email = loaded_last_used_email;
     });
     set_color_scheme(loaded_theme.to_appearance());
 }
@@ -240,6 +250,7 @@ fn save() {
         },
         theme: state.theme,
         close_behavior: state.close_behavior,
+        last_used_email: state.last_used_email.clone(),
     });
     if let Ok(json) = serde_json::to_string(&saved)
         && let Some(encoded) = encode_storage(&json)
@@ -329,6 +340,7 @@ pub(crate) fn account_by_id(id: u32) -> Option<Account> {
 pub(crate) fn account_card_view(id: u32) -> Option<AccountCardView> {
     state().with(|state| {
         let refreshing = state.refreshing_ids.contains(&id);
+        let last_used = state.last_used_email.as_deref();
         state
             .accounts
             .iter()
@@ -341,8 +353,25 @@ pub(crate) fn account_card_view(id: u32) -> Option<AccountCardView> {
                 error: account.error.clone(),
                 needs_login: account.needs_login,
                 refreshing,
+                is_last_used: last_used.is_some_and(|e| e.eq_ignore_ascii_case(&account.email)),
             })
     })
+}
+
+/// Records `email` as the most recently launched/switched account and persists it.
+pub(crate) fn mark_last_used_account(email: &str) {
+    let trimmed = email.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    state().update(|state| state.last_used_email = Some(trimmed.to_owned()));
+    save();
+}
+
+/// Returns the email of the last launched/switched account, if any (tracked where read).
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn last_used_email() -> Option<String> {
+    state().with(|state| state.last_used_email.clone())
 }
 
 /// The selected appearance preference (`system`, `light`, or `dark`).
@@ -585,11 +614,20 @@ pub(crate) fn remove_accounts(ids: &[u32]) {
 
 fn remove_accounts_from_state(state: &mut State, ids: &[u32]) -> usize {
     let before = state.accounts.len();
+    let clears_last_used = state.last_used_email.as_deref().is_some_and(|last| {
+        state
+            .accounts
+            .iter()
+            .any(|account| ids.contains(&account.id) && account.email.eq_ignore_ascii_case(last))
+    });
     state.accounts.retain(|account| !ids.contains(&account.id));
     state
         .selected_ids
         .retain(|selected| !ids.contains(selected) && state.accounts.iter().any(|a| a.id == *selected));
     state.refreshing_ids.retain(|id| !ids.contains(id));
+    if clears_last_used {
+        state.last_used_email = None;
+    }
     before.saturating_sub(state.accounts.len())
 }
 
@@ -783,9 +821,22 @@ mod tests {
             },
             theme: ThemeMode::Dark,
             close_behavior: CloseBehavior::Tray,
+            last_used_email: Some("a@b.c".to_owned()),
         };
         let json = serde_json::to_string(&saved).expect("json");
+        assert!(json.contains("\"last_used_email\":\"a@b.c\""));
         assert_eq!(serde_json::from_str::<Saved>(&json).expect("saved"), saved);
+
+        let without_last_used = Saved {
+            last_used_email: None,
+            ..saved
+        };
+        let omitted_json = serde_json::to_string(&without_last_used).expect("json");
+        assert!(!omitted_json.contains("last_used_email"));
+        assert_eq!(
+            serde_json::from_str::<Saved>(&omitted_json).expect("saved"),
+            without_last_used
+        );
     }
 
     #[test]
@@ -802,6 +853,7 @@ mod tests {
         assert!(saved.proxy.enabled);
         assert_eq!(saved.theme, ThemeMode::System);
         assert_eq!(saved.close_behavior, CloseBehavior::Ask);
+        assert_eq!(saved.last_used_email, None);
     }
 
     #[test]
@@ -913,12 +965,144 @@ mod tests {
         assert!(state.selected_ids.is_empty());
         assert_eq!(state.refreshing_ids, vec![2]);
     }
+
+    #[test]
+    fn deleting_last_used_account_clears_marker_case_insensitively() {
+        let make = |id: u32, email: &str| Account {
+            id,
+            email: email.to_owned(),
+            refresh_token: format!("1//{id}"),
+            tier: None,
+            models: Vec::new(),
+            fetched_at: None,
+            error: None,
+            needs_login: false,
+            access_token: None,
+            expires_at: 0,
+        };
+        let mut state = State {
+            accounts: vec![make(1, "a@b.c"), make(2, "User@Example.com")],
+            next_id: 3,
+            last_used_email: Some("user@example.com".to_owned()),
+            ..State::default()
+        };
+
+        // Deleting an unrelated account preserves the marker.
+        assert_eq!(remove_accounts_from_state(&mut state, &[1]), 1);
+        assert_eq!(state.last_used_email.as_deref(), Some("user@example.com"));
+
+        // Deleting the matching account clears the marker case-insensitively.
+        assert_eq!(remove_accounts_from_state(&mut state, &[2]), 1);
+        assert_eq!(state.last_used_email, None);
+    }
+
+    #[test]
+    fn mark_last_used_account_moves_marker_persists_and_clears_on_delete() {
+        use std::collections::BTreeMap;
+        use std::sync::{Arc, Mutex};
+        use nsh_core::element::Root;
+        use nsh_core::storage::{StorageBackend, StorageChange};
+        use nsh_core::{ApproxTextEngine, Core};
+
+        struct MemBackend {
+            entries: Mutex<BTreeMap<String, String>>,
+        }
+        impl MemBackend {
+            fn new(initial: (String, String)) -> Arc<Self> {
+                let mut map = BTreeMap::new();
+                map.insert(initial.0, initial.1);
+                Arc::new(Self {
+                    entries: Mutex::new(map),
+                })
+            }
+        }
+        impl StorageBackend for MemBackend {
+            fn load(&self) -> Result<BTreeMap<String, String>, String> {
+                Ok(self.entries.lock().unwrap().clone())
+            }
+            fn write(&self, change: StorageChange) {
+                let mut entries = self.entries.lock().unwrap();
+                match change {
+                    StorageChange::Set(k, v) => {
+                        entries.insert(k, v);
+                    }
+                    StorageChange::Remove(k) => {
+                        entries.remove(&k);
+                    }
+                    StorageChange::Clear => entries.clear(),
+                }
+            }
+        }
+
+        let initial = seed_storage_entry_with_last_used_for_test(
+            vec![
+                ("a@b.c", AccountTier::Ultra, Vec::new(), None),
+                ("d@e.f", AccountTier::Pro, Vec::new(), None),
+            ],
+            ThemeMode::Light,
+            Some("a@b.c"),
+        );
+        let backend = MemBackend::new(initial);
+
+        #[component]
+        fn StoreDriver() -> impl IntoElement {
+            load();
+            assert_eq!(last_used_email().as_deref(), Some("a@b.c"));
+            assert!(account_card_view(1).unwrap().is_last_used);
+            assert!(!account_card_view(2).unwrap().is_last_used);
+
+            // Whitespace-only email is ignored.
+            mark_last_used_account("   ");
+            assert_eq!(last_used_email().as_deref(), Some("a@b.c"));
+
+            // Launching a new account moves the marker and trims surrounding spaces.
+            mark_last_used_account("  D@E.F  ");
+            assert_eq!(last_used_email().as_deref(), Some("D@E.F"));
+            assert!(!account_card_view(1).unwrap().is_last_used);
+            assert!(account_card_view(2).unwrap().is_last_used);
+            view()
+        }
+
+        let mut core = Core::new(ApproxTextEngine, size(px(640.0), px(480.0)));
+        core.set_storage(Some(backend.clone()));
+        core.mount_root(&Root::of::<StoreDriver>());
+        let _ = core.commit();
+
+        // Reload on a fresh surface from the persisted storage to verify restart durability + delete cleanup.
+        #[component]
+        fn ReloadDriver() -> impl IntoElement {
+            load();
+            assert_eq!(last_used_email().as_deref(), Some("D@E.F"));
+            assert!(account_card_view(2).unwrap().is_last_used);
+
+            remove_accounts(&[2]);
+            assert_eq!(last_used_email(), None);
+            assert!(!account_card_view(1).unwrap().is_last_used);
+            view()
+        }
+
+        let mut core2 = Core::new(ApproxTextEngine, size(px(640.0), px(480.0)));
+        core2.set_storage(Some(backend.clone()));
+        core2.mount_root(&Root::of::<ReloadDriver>());
+        let _ = core2.commit();
+
+        // Confirm the cleared state was persisted back to storage.
+        let persisted = backend
+            .entries
+            .lock()
+            .unwrap()
+            .get(STORAGE_KEY)
+            .and_then(|raw| decode_storage(raw))
+            .and_then(|json| serde_json::from_str::<Saved>(&json).ok())
+            .expect("persisted saved state");
+        assert_eq!(persisted.last_used_email, None);
+    }
 }
 
-#[cfg(test)]
-pub(crate) fn seed_storage_entry_for_test(
+fn encode_seed_storage_entry(
     accounts: Vec<(&str, AccountTier, Vec<ModelQuota>, Option<i64>)>,
     theme: ThemeMode,
+    last_used_email: Option<&str>,
 ) -> (String, String) {
     let saved = Saved {
         accounts: accounts
@@ -935,8 +1119,53 @@ pub(crate) fn seed_storage_entry_for_test(
         proxy: SavedProxy::default(),
         theme,
         close_behavior: CloseBehavior::Ask,
+        last_used_email: last_used_email.map(str::to_owned),
     };
     let json = serde_json::to_string(&saved).expect("saved json");
     let encoded = encode_storage(&json).expect("encoded");
     (STORAGE_KEY.to_owned(), encoded)
+}
+
+#[cfg(test)]
+pub(crate) fn seed_storage_entry_for_test(
+    accounts: Vec<(&str, AccountTier, Vec<ModelQuota>, Option<i64>)>,
+    theme: ThemeMode,
+) -> (String, String) {
+    encode_seed_storage_entry(accounts, theme, None)
+}
+
+#[cfg(test)]
+pub(crate) fn seed_storage_entry_with_last_used_for_test(
+    accounts: Vec<(&str, AccountTier, Vec<ModelQuota>, Option<i64>)>,
+    theme: ThemeMode,
+    last_used_email: Option<&str>,
+) -> (String, String) {
+    encode_seed_storage_entry(accounts, theme, last_used_email)
+}
+
+pub(crate) fn seed_headless_storage_entry_for_test(
+    accounts: &[(&str, &str)],
+    last_used_email: Option<&str>,
+) -> (String, String) {
+    let now = unix_ms() as i64;
+    let items = accounts
+        .iter()
+        .map(|(email, tier_name)| {
+            let tier = match tier_name.trim().to_ascii_lowercase().as_str() {
+                "ultra" => AccountTier::Ultra,
+                "pro" => AccountTier::Pro,
+                _ => AccountTier::Free,
+            };
+            let models = vec![ModelQuota {
+                name: "Gemini".to_owned(),
+                remaining: 0.9,
+                reset: None,
+                weekly_remaining: Some(0.95),
+                weekly_reset: None,
+                is_weekly_only: false,
+            }];
+            (*email, tier, models, Some(now))
+        })
+        .collect();
+    encode_seed_storage_entry(items, ThemeMode::Light, last_used_email)
 }

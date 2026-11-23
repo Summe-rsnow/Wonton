@@ -7,10 +7,10 @@
 **专为 Antigravity 打造的进程级独立代理与多账号额度管理工具**
 
 无需修改系统代理、无需安装虚拟网卡（TUN），在进程级为 Antigravity 注入独立 HTTP 代理并一键启动，同时在一个原生窗口内完成多账号管理、实时模型额度监控与账号凭证切换。  
-基于 **Rust + [NSH](https://github.com/longbridge/nsh) + [Bento](https://github.com/Summe-rsnow/Bento) `v1.0.0`** 构建，纯原生渲染，无 JavaScript 运行时开销。
+基于 **Rust + [NSH](https://github.com/longbridge/nsh) + [Bento](https://github.com/Summe-rsnow/Bento) `v1.0.1`** 构建，纯原生渲染，无 JavaScript 运行时开销。
 
 <p>
-  <a href="https://github.com/Summe-rsnow/Wonton/releases"><img src="https://img.shields.io/badge/Version-v1.2.1-1a73e8?style=flat-square" alt="Version v1.2.1" /></a>
+  <a href="https://github.com/Summe-rsnow/Wonton/releases"><img src="https://img.shields.io/badge/Version-v1.2.2-1a73e8?style=flat-square" alt="Version v1.2.2" /></a>
   <img src="https://img.shields.io/badge/Rust-2024-orange?style=flat-square&logo=rust" alt="Rust 2024" />
   <img src="https://img.shields.io/badge/Platform-Windows-0ea5e9?style=flat-square" alt="Platform Windows" />
   <img src="https://img.shields.io/badge/UI-NSH%20Native-6366f1?style=flat-square" alt="UI NSH Native" />
@@ -81,9 +81,10 @@
   - **选中即局部操作**：勾选账号后，工具栏的**导出**与**刷新**会自动切换为针对**已选账号**（未勾选时作用于全部账号），并支持工具栏一键**批量删除**（带二次确认）。
 - **🚀 多端凭证切换与启动**
   - 工具栏右侧集成 **Antigravity 经典版**、**Antigravity IDE**、**Antigravity CLI (`agy`)** 三个直达启动按钮；账号行支持一键**刷新凭证并切换账号后启动对应客户端**（自动继承进程级代理设置）。
+  - 自动持久化记录并在卡片上高亮标记 **「上次使用」** 的账号（附带语义强调边框），切换启动新账号时自动迁移标记，删除该账号时自动清除。
 - **🖥️ 原生桌面体验与版本更新**
-  - 顶栏实时展示当前版本号，提供「关于」界面，支持一键检测 **GitHub Releases** 最新版本并直达发布页下载。
-  - 支持 Windows 系统托盘常驻与快捷菜单（显示窗口 / 刷新全部账号 / 关于与检查更新 / 关闭行为偏好设置）。
+  - 顶栏采用家族统一布局（右置跟随系统 / 浅色 / 深色三模式切换器），实时展示当前版本号，提供「关于」界面，支持一键检测 **GitHub Releases** 最新版本并直达发布页下载。
+  - 支持窗口尺寸与屏幕位置自动记忆与恢复（涵盖启动恢复、防抖持久化和最小化到托盘 / 退出前同步落盘），以及 Windows 系统托盘常驻与快捷菜单（显示窗口 / 刷新全部账号 / 关于与检查更新 / 关闭行为偏好设置）。
 
 ---
 
@@ -136,7 +137,7 @@ Wonton/
 │   └── release.yml         # Tag 推送自动构建并发布 GitHub Release 工作流
 ├── assets/                 # 应用图标、Logo、品牌标与 64×64 托盘图标
 ├── docs/screenshots/       # README 展示截图（已脱敏）
-├── nsh.json                # 应用元信息、版本号（1.2.1）、窗口配置与主题声明
+├── nsh.json                # 应用元信息、版本号（1.2.2）、窗口配置与主题声明
 ├── theme.json              # 浅色 / 深色语义色 Token（含 success / warning / scrim）
 ├── DESIGN.md               # 设计规范、布局约束与动效清单
 ├── src/
@@ -168,9 +169,10 @@ Wonton/
 
 | 工具 | 当前版本 | 仓库地址 | 定位与职责 |
 |---|---|---|---|
-| **Bento** | `v1.0.0` | [Summe-rsnow/Bento](https://github.com/Summe-rsnow/Bento) | 共享原生 UI 组件库、统一 24×24 图标库与桌面壳基础设施 |
-| **Wonton** | `v1.2.1` | [Summe-rsnow/Wonton](https://github.com/Summe-rsnow/Wonton) | 专为 Antigravity 打造的进程级独立代理与多账号额度管理工具 |
-| **Sundae** | `v1.0.0` | [Summe-rsnow/Sundae](https://github.com/Summe-rsnow/Sundae) | 专为 Windows Scoop 打造的轻快原生桌面软件包管理器 |
+| **Bento** | `v1.0.1` | [Summe-rsnow/Bento](https://github.com/Summe-rsnow/Bento) | 共享原生 UI 组件库、统一 24×24 图标库与桌面壳基础设施 |
+| **Wonton** | `v1.2.2` | [Summe-rsnow/Wonton](https://github.com/Summe-rsnow/Wonton) | 专为 Antigravity 打造的进程级独立代理与多账号额度管理工具 |
+| **Sundae** | `v1.0.1` | [Summe-rsnow/Sundae](https://github.com/Summe-rsnow/Sundae) | 专为 Windows Scoop 打造的轻快原生桌面软件包管理器 |
+| **Ramen** | `v1.0.0` | [Summe-rsnow/Ramen](https://github.com/Summe-rsnow/Ramen) | 专为 Windows 打造的极速桌面文件搜索与即时索引检索工具 |
 
 ---
 

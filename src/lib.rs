@@ -46,3 +46,11 @@ pub fn App() -> impl IntoElement {
         .p_safe_area()
         .child(shell::screen())
 }
+
+#[doc(hidden)]
+pub fn seed_storage_entry_with_last_used_for_test(
+    accounts: &[(&str, &str)],
+    last_used_email: Option<&str>,
+) -> (String, String) {
+    store::seed_headless_storage_entry_for_test(accounts, last_used_email)
+}

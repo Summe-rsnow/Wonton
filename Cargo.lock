@@ -244,8 +244,8 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
 name = "bento"
-version = "1.0.0"
-source = "git+https://github.com/Summe-rsnow/Bento.git?tag=v1.0.0#8902d692f0428c37ddd62ce368733d288d571f6d"
+version = "1.0.1"
+source = "git+https://github.com/Summe-rsnow/Bento.git?tag=v1.0.1#3a8679adfb5920f3084c5a51fd3996cdc5e1f5fa"
 dependencies = [
  "base64 0.23.1",
  "nsh-base",
@@ -2525,7 +2525,7 @@ dependencies = [
 
 [[package]]
 name = "nsh-app-wonton"
-version = "1.2.1"
+version = "1.2.2"
 dependencies = [
  "base64 0.23.1",
  "bento",

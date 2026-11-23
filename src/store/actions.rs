@@ -16,9 +16,10 @@ use nsh_core::time::unix_ms;
 
 use super::{
     account_by_id, account_count, account_ids, busy, clear_notice, clear_selection, export_items,
-    insert_account, proxy, proxy_testing, refresh_account, selected_account_ids, set_busy,
-    set_import_progress, set_notice, set_proxy_testing, set_switching_account_id, set_token,
-    set_update_status, switching_account_id, update_checking, ImportProgress, Tone, UpdateStatus,
+    insert_account, mark_last_used_account, proxy, proxy_testing, refresh_account,
+    selected_account_ids, set_busy, set_import_progress, set_notice, set_proxy_testing,
+    set_switching_account_id, set_token, set_update_status, switching_account_id, update_checking,
+    ImportProgress, Tone, UpdateStatus,
 };
 use crate::google::{self, ImportEntry};
 use crate::launch;
@@ -415,6 +416,7 @@ pub(crate) fn launch_account_target(id: u32, target: launch::LaunchTarget) {
         set_switching_account_id(None);
         match result {
             Ok(launch::LaunchOutcome::Started { pid }) => {
+                mark_last_used_account(&account.email);
                 let route = if proxy_cfg.enabled {
                     format!("代理 {}", proxy_cfg.url())
                 } else {
@@ -425,14 +427,17 @@ pub(crate) fn launch_account_target(id: u32, target: launch::LaunchTarget) {
                     Tone::Ok,
                 );
             }
-            Ok(launch::LaunchOutcome::CredentialsOnly) => set_notice(
-                format!(
-                    "已写入 {} 的 {} 凭据（未检测到 agy.exe，可在终端运行 agy）",
-                    account.email,
-                    target.label()
-                ),
-                Tone::Ok,
-            ),
+            Ok(launch::LaunchOutcome::CredentialsOnly) => {
+                mark_last_used_account(&account.email);
+                set_notice(
+                    format!(
+                        "已写入 {} 的 {} 凭据（未检测到 agy.exe，可在终端运行 agy）",
+                        account.email,
+                        target.label()
+                    ),
+                    Tone::Ok,
+                );
+            }
             Err(error) => set_notice(error, Tone::Bad),
         }
     });

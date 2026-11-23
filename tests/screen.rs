@@ -7,7 +7,7 @@ use std::time::Duration;
 use nsh_core::platform::{Idiom, Os};
 use nsh_core::prelude::{px, size};
 use nsh_engine::{EngineConfig, Root};
-use nsh_testing::Headless;
+use nsh_testing::{Headless, MemoryStorage};
 
 const GONE: Duration = Duration::from_secs(5);
 
@@ -24,7 +24,7 @@ fn start() -> Headless {
 #[test]
 fn shows_version_and_updated_toolbar_controls() {
     let app = start();
-    assert!(app.screen().shows("v1.2.1"));
+    assert!(app.screen().shows("v1.2.2"));
     for label in [
         "关于",
         "测试",
@@ -43,6 +43,25 @@ fn shows_version_and_updated_toolbar_controls() {
             "missing toolbar button: {label}"
         );
     }
+
+    // Verify title bar order: About icon button sits to the left of the theme switcher.
+    let layout = app.screen().layout_nodes();
+    let about_id = app.screen().id("role:button[关于]").unwrap();
+    let theme_id = app.screen().id("role:button[跟随系统]").unwrap();
+    let about_x = layout
+        .iter()
+        .find(|n| n.id == about_id)
+        .map(|n| n.bounds.origin.x.0)
+        .expect("about button layout bounds");
+    let theme_x = layout
+        .iter()
+        .find(|n| n.id == theme_id)
+        .map(|n| n.bounds.origin.x.0)
+        .expect("theme switcher layout bounds");
+    assert!(
+        about_x < theme_x,
+        "expected About button ({about_x}) to be left of theme switcher ({theme_x})"
+    );
 }
 
 #[test]
@@ -68,7 +87,7 @@ fn the_about_dialog_shows_version_links_and_update_check() {
     let mut app = start();
     app.press("role:button[关于]").unwrap();
     app.wait_for("版本更新").unwrap();
-    assert!(app.screen().shows("v1.2.1"));
+    assert!(app.screen().shows("v1.2.2"));
     assert!(app.screen().shows("Apache-2.0"));
     assert!(app.screen().matches("role:button[检测更新]").unwrap());
     assert!(app.screen().matches("role:link[Summe-rsnow/Wonton]").unwrap());
@@ -134,4 +153,54 @@ fn close_prompt_can_cancel_and_minimize_to_tray_without_asking_again() {
     // Subsequent close presses honor the saved preference without re-opening the prompt.
     app.press_window_close("main").unwrap();
     assert!(!app.screen().shows("关闭 Wonton"));
+}
+
+#[test]
+fn last_used_badge_renders_on_persisted_account_and_clears_on_delete() {
+    let entry = nsh_app_wonton::seed_storage_entry_with_last_used_for_test(
+        &[("a@b.c", "Ultra"), ("d@e.f", "Pro")],
+        Some("d@e.f"),
+    );
+
+    let mut config = EngineConfig::new(Root::of::<nsh_app_wonton::App>());
+    config.viewport = size(px(860.0), px(640.0));
+    config.environment.os = Os::Windows;
+    config.environment.idiom = Idiom::Desktop;
+    config.storage = Some(MemoryStorage::new([entry]));
+    let mut app = Headless::start(config).unwrap();
+
+    app.wait_for("a@b.c").unwrap();
+    app.wait_for("d@e.f").unwrap();
+    app.wait_for("上次使用").unwrap();
+    assert_eq!(app.screen().count("text:上次使用").unwrap(), 1);
+
+    // Confirm the badge renders on the second account's row ("d@e.f"), below "a@b.c".
+    let layout = app.screen().layout_nodes();
+    let y_of = |selector: &str| -> f32 {
+        let id = app.screen().id(selector).unwrap();
+        layout
+            .iter()
+            .find(|n| n.id == id)
+            .map(|n| n.bounds.origin.y.0)
+            .unwrap()
+    };
+    let first_y = y_of("text:a@b.c");
+    let second_y = y_of("text:d@e.f");
+    let badge_y = y_of("text:上次使用");
+    assert!(
+        badge_y > first_y && (badge_y - second_y).abs() < 20.0,
+        "expected 上次使用 (y={badge_y}) on d@e.f row (y={second_y}) below a@b.c (y={first_y})"
+    );
+
+    // Delete "d@e.f" -> "上次使用" disappears while "a@b.c" stays.
+    app.press("role:checkbox[选择 d@e.f]").unwrap();
+    app.press("role:button[删除]").unwrap();
+    app.wait_for("确认删除账号").unwrap();
+    app.press("role:button[确认删除]").unwrap();
+    app.wait_for_gone("确认删除账号", GONE).unwrap();
+    app.wait_for_gone("上次使用", GONE).unwrap();
+
+    assert!(!app.screen().shows("d@e.f"));
+    assert!(!app.screen().shows("上次使用"));
+    assert!(app.screen().shows("a@b.c"));
 }

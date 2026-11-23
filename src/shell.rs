@@ -6,7 +6,7 @@ use std::time::Duration;
 use bento::drag_list::DragList;
 use bento::shell::{
     about_icon_button, bind_close_handler, close_behavior_submenu, confirm_close_dialog,
-    theme_mode_segmented, title_bar_brand, NoticeCenter,
+    remember_window_placement, title_bar_brand, title_bar_right_with_theme, NoticeCenter,
 };
 use nsh_base::theme;
 use nsh_core::Cursor;
@@ -44,6 +44,7 @@ pub(crate) fn Screen() -> impl IntoElement {
     notices.install_auto_dismiss();
 
     let main_window = current_window();
+    remember_window_placement(main_window.clone(), 720.0, 560.0);
     bind_close_handler(main_window.clone(), store::close_behavior, move || {
         close_prompt_open.set(true);
     });
@@ -148,27 +149,18 @@ fn header(about_dialog_open: Signal<bool>) -> impl IntoElement {
                 .text_color(move || theme().muted_foreground),
         )
         .child(view().flex_1())
-        .child(
-            view()
-                .window_drag(false)
-                .flex_shrink_0()
-                .flex_row()
-                .items_center()
-                .gap(px(6.0))
-                .child(theme_mode_segmented(
-                    store::theme_mode,
-                    store::set_theme_mode,
-                ))
-                .child(toolbar_separator())
-                .child(about_icon_button(
-                    crate::APP_META,
-                    move || store::available_update().map(|u| u.version),
-                    move || {
-                        store::clear_notice();
-                        about_dialog_open.set(true);
-                    },
-                )),
-        )
+        .child(title_bar_right_with_theme(
+            about_icon_button(
+                crate::APP_META,
+                move || store::available_update().map(|u| u.version),
+                move || {
+                    store::clear_notice();
+                    about_dialog_open.set(true);
+                },
+            ),
+            store::theme_mode,
+            store::set_theme_mode,
+        ))
 }
 
 fn proxy_bar(
@@ -549,6 +541,10 @@ fn account_card(
                 .border_color(move || theme().primary)
                 .shadow_lg()
         })
+        .style_when(
+            move || !is_dragging() && account.get().is_some_and(|a| a.is_last_used),
+            |s| s.border_color(move || theme().primary.opacity(0.45)),
+        )
         .on_layout(move |bounds: &Bounds<Points>| drag_layout.record_layout(id, *bounds))
         .claim_touches(
             TouchClaim::on_pan(PanActivation {
@@ -609,6 +605,10 @@ fn account_card(
                                 .unwrap_or(AccountTier::Free)
                         })
                     },
+                ))
+                .child(when(
+                    move || account.get().is_some_and(|a| a.is_last_used),
+                    || status_badge("上次使用", ValueTone::Info),
                 ))
                 .child(when(move || account.get().is_some_and(|account| account.needs_login), || {
                     status_badge("需重新登录", ValueTone::Bad)
