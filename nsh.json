@@ -1,8 +1,8 @@
 {
   "name": "Wonton",
   "id": "com.xcmm.wonton",
-  "version": "1.2.2",
-  "build": 7,
+  "version": "1.2.3",
+  "build": 8,
   "singleInstance": true,
   "icon": "assets/icon.png",
   "appearance": "system",

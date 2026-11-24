@@ -888,11 +888,9 @@ pub fn parse_quota_summary(body: &str) -> Vec<SummaryGroup> {
 
 fn is_argon_group(group: &SummaryGroup) -> bool {
     group.display_name.to_lowercase().contains("argon")
-        || group.description.to_lowercase().contains("argon")
         || group.buckets.iter().any(|bucket| {
             bucket.bucket_id.to_lowercase().contains("argon")
                 || bucket.display_name.to_lowercase().contains("argon")
-                || bucket.description.to_lowercase().contains("argon")
         })
 }
 
@@ -1104,7 +1102,14 @@ pub fn build_account_quotas(
         }
     }
 
-    let allow_ultra = matches!(effective_tier, Some(AccountTier::Ultra));
+    let argon_merged_into_gemini = groups.is_some_and(|g| {
+        g.iter().any(|group| {
+            !is_argon_group(group)
+                && !is_third_party_group(group)
+                && group.description.to_lowercase().contains("argon")
+        })
+    });
+    let allow_ultra = matches!(effective_tier, Some(AccountTier::Ultra)) && !argon_merged_into_gemini;
     let is_free = effective_tier == Some(AccountTier::Free);
     let has_argon = !catalog.argon_explicitly_disabled
         && (allow_ultra
@@ -1149,10 +1154,41 @@ pub fn build_account_quotas(
         };
         let has_real_groups = groups.is_some_and(|g| !g.is_empty());
 
+        let model_quota = || {
+            model_val.clone().map(|(m_rem, m_reset)| {
+                let is_weekly_window = m_reset
+                    .as_deref()
+                    .and_then(crate::format::parse_rfc3339)
+                    .is_some_and(|reset_ms| {
+                        let now_ms = nsh_core::time::unix_ms() as i64;
+                        reset_ms - now_ms > 6 * 3_600_000
+                    });
+                if is_weekly_window {
+                    ModelQuota {
+                        name: label.to_owned(),
+                        remaining: m_rem,
+                        reset: m_reset.clone(),
+                        weekly_remaining: Some(m_rem),
+                        weekly_reset: m_reset,
+                        is_weekly_only: true,
+                    }
+                } else {
+                    ModelQuota {
+                        name: label.to_owned(),
+                        remaining: m_rem,
+                        reset: m_reset,
+                        weekly_remaining: None,
+                        weekly_reset: None,
+                        is_weekly_only: false,
+                    }
+                }
+            })
+        };
+
         let resolved = if is_free && bucket != QuotaBucket::Argon {
             // Free accounts use weekly quotas only (no 5H rolling window).
             let weekly = if has_real_groups {
-                group_weekly.or(group_5h)
+                group_weekly.or(group_5h).or(model_val)
             } else {
                 model_val
             };
@@ -1205,37 +1241,10 @@ pub fn build_account_quotas(
                     weekly_reset: w_reset,
                     is_weekly_only: true,
                 }),
-                (None, None) => None,
+                (None, None) => model_quota(),
             }
         } else {
-            model_val.map(|(m_rem, m_reset)| {
-                let is_weekly_window = m_reset
-                    .as_deref()
-                    .and_then(crate::format::parse_rfc3339)
-                    .is_some_and(|reset_ms| {
-                        let now_ms = nsh_core::time::unix_ms() as i64;
-                        reset_ms - now_ms > 6 * 3_600_000
-                    });
-                if is_weekly_window {
-                    ModelQuota {
-                        name: label.to_owned(),
-                        remaining: m_rem,
-                        reset: m_reset.clone(),
-                        weekly_remaining: Some(m_rem),
-                        weekly_reset: m_reset,
-                        is_weekly_only: true,
-                    }
-                } else {
-                    ModelQuota {
-                        name: label.to_owned(),
-                        remaining: m_rem,
-                        reset: m_reset,
-                        weekly_remaining: None,
-                        weekly_reset: None,
-                        is_weekly_only: false,
-                    }
-                }
-            })
+            model_quota()
         };
 
         if let Some(row) = resolved {
@@ -1843,6 +1852,47 @@ mod tests {
         assert!(is_retryable_io_error(
             "经代理 http://127.0.0.1:7890 请求失败：io: unexpected end of file"
         ));
+    }
+
+    #[test]
+    fn merged_argon_in_gemini_description_keeps_gemini_pool() {
+        let merged_summary_json = r#"{
+            "groups": [
+                {
+                    "displayName": "Gemini Models",
+                    "description": "Models within this group: Gemini 4 Neon, Gemini 4 Carbon, Gemini 4 Argon, Gemini 4 Hydrogen, Gemini 3.8 Flash",
+                    "buckets": [
+                        {"bucketId":"gemini-weekly","window":"weekly","remainingFraction":0.98,"resetTime":"2026-12-01T04:24:55Z"},
+                        {"bucketId":"gemini-5h","window":"5h","remainingFraction":0.97,"resetTime":"2026-11-24T09:24:55Z"}
+                    ]
+                },
+                {
+                    "displayName": "Claude and GPT models",
+                    "description": "Models within this group: Claude Opus 5.5, Claude Sonnet 5.5, GPT-OSS 120B",
+                    "buckets": [
+                        {"bucketId":"3p-weekly","window":"weekly","remainingFraction":1.0},
+                        {"bucketId":"3p-5h","window":"5h","remainingFraction":1.0}
+                    ]
+                }
+            ]
+        }"#;
+        let models_json = r#"{
+            "models": {
+                "gemini-4-hydrogen-high": {"displayName":"Gemini 4 Hydrogen (High)","quotaInfo":{"remainingFraction":0.96,"resetTime":"2026-11-24T09:24:55Z"}},
+                "gemini-4-argon-high": {"displayName":"Gemini 4 Argon (High)","quotaInfo":{"remainingFraction":0.96,"resetTime":"2026-11-24T09:24:55Z"}},
+                "claude-opus-5-5-high": {"displayName":"Claude Opus 5.5 (High)","quotaInfo":{"remainingFraction":0.30,"resetTime":"2026-11-25T15:45:58Z"}},
+                "gpt-oss-120b-medium": {"displayName":"GPT-OSS 120B (Medium)","quotaInfo":{"remainingFraction":0.30,"resetTime":"2026-11-25T15:45:58Z"}}
+            }
+        }"#;
+        let groups = parse_quota_summary(merged_summary_json);
+        for tier in [AccountTier::Pro, AccountTier::Ultra] {
+            let res = build_account_quotas(models_json, Some(&groups), Some(tier)).expect("merged");
+            let names: Vec<&str> = res.models.iter().map(|m| m.name.as_str()).collect();
+            assert_eq!(names, vec!["Gemini", "Claude 5.5 / GPT"]);
+            assert!(!res.models[0].is_weekly_only);
+            assert!((res.models[0].remaining - 0.97).abs() < 1e-4);
+            assert_eq!(res.models[0].weekly_remaining, Some(0.98));
+        }
     }
 }
 

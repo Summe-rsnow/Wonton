@@ -10,7 +10,7 @@
 基于 **Rust + [NSH](https://github.com/longbridge/nsh) + [Bento](https://github.com/Summe-rsnow/Bento) `v1.0.1`** 构建，纯原生渲染，无 JavaScript 运行时开销。
 
 <p>
-  <a href="https://github.com/Summe-rsnow/Wonton/releases"><img src="https://img.shields.io/badge/Version-v1.2.2-1a73e8?style=flat-square" alt="Version v1.2.2" /></a>
+  <a href="https://github.com/Summe-rsnow/Wonton/releases"><img src="https://img.shields.io/badge/Version-v1.2.3-1a73e8?style=flat-square" alt="Version v1.2.3" /></a>
   <img src="https://img.shields.io/badge/Rust-2024-orange?style=flat-square&logo=rust" alt="Rust 2024" />
   <img src="https://img.shields.io/badge/Platform-Windows-0ea5e9?style=flat-square" alt="Platform Windows" />
   <img src="https://img.shields.io/badge/UI-NSH%20Native-6366f1?style=flat-square" alt="UI NSH Native" />
@@ -137,7 +137,7 @@ Wonton/
 │   └── release.yml         # Tag 推送自动构建并发布 GitHub Release 工作流
 ├── assets/                 # 应用图标、Logo、品牌标与 64×64 托盘图标
 ├── docs/screenshots/       # README 展示截图（已脱敏）
-├── nsh.json                # 应用元信息、版本号（1.2.2）、窗口配置与主题声明
+├── nsh.json                # 应用元信息、版本号（1.2.3）、窗口配置与主题声明
 ├── theme.json              # 浅色 / 深色语义色 Token（含 success / warning / scrim）
 ├── DESIGN.md               # 设计规范、布局约束与动效清单
 ├── src/
@@ -170,7 +170,7 @@ Wonton/
 | 工具 | 当前版本 | 仓库地址 | 定位与职责 |
 |---|---|---|---|
 | **Bento** | `v1.0.1` | [Summe-rsnow/Bento](https://github.com/Summe-rsnow/Bento) | 共享原生 UI 组件库、统一 24×24 图标库与桌面壳基础设施 |
-| **Wonton** | `v1.2.2` | [Summe-rsnow/Wonton](https://github.com/Summe-rsnow/Wonton) | 专为 Antigravity 打造的进程级独立代理与多账号额度管理工具 |
+| **Wonton** | `v1.2.3` | [Summe-rsnow/Wonton](https://github.com/Summe-rsnow/Wonton) | 专为 Antigravity 打造的进程级独立代理与多账号额度管理工具 |
 | **Sundae** | `v1.0.1` | [Summe-rsnow/Sundae](https://github.com/Summe-rsnow/Sundae) | 专为 Windows Scoop 打造的轻快原生桌面软件包管理器 |
 | **Ramen** | `v1.0.0` | [Summe-rsnow/Ramen](https://github.com/Summe-rsnow/Ramen) | 专为 Windows 打造的极速桌面文件搜索与即时索引检索工具 |
 
