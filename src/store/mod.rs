@@ -137,6 +137,7 @@ struct State {
     proxy: ProxyConfig,
     theme: ThemeMode,
     close_behavior: CloseBehavior,
+    autostart: bool,
     last_used_email: Option<String>,
     busy: bool,
     proxy_testing: bool,
@@ -156,6 +157,7 @@ impl Default for State {
             proxy: ProxyConfig::default(),
             theme: ThemeMode::System,
             close_behavior: CloseBehavior::Ask,
+            autostart: false,
             last_used_email: None,
             busy: false,
             proxy_testing: false,
@@ -175,6 +177,15 @@ fn state() -> Signal<State> {
 
 /// Reads the saved accounts, proxy, theme, and close preference, once, when the app starts.
 pub(crate) fn load() {
+    let autostart_enabled = match bento::autostart::is_autostart_enabled(crate::APP_META.name) {
+        Ok(enabled) => enabled,
+        Err(error) => {
+            log::warn!("failed to query autostart state: {error}");
+            false
+        }
+    };
+    state().update(|state| state.autostart = autostart_enabled);
+
     let Some(raw) = Storage::get_item(STORAGE_KEY) else {
         set_color_scheme(Appearance::System);
         return;
@@ -395,6 +406,30 @@ pub(crate) fn close_behavior() -> CloseBehavior {
 pub(crate) fn set_close_behavior(behavior: CloseBehavior) {
     state().update(|state| state.close_behavior = behavior);
     save();
+}
+
+/// Whether launch-at-login (开机自启) is currently enabled in the OS.
+pub(crate) fn autostart() -> bool {
+    state().with(|state| state.autostart)
+}
+
+/// Toggles OS launch-at-login (开机自启), syncing UI state on success and
+/// reporting errors via notice without panicking.
+pub(crate) fn set_autostart(enabled: bool) {
+    match bento::autostart::set_autostart_enabled(crate::APP_META.name, enabled) {
+        Ok(()) => {
+            state().update(|state| state.autostart = enabled);
+            if enabled {
+                set_notice("已开启开机自启", Tone::Ok);
+            } else {
+                set_notice("已关闭开机自启", Tone::Info);
+            }
+        }
+        Err(error) => {
+            log::warn!("failed to set autostart={enabled}: {error}");
+            set_notice(format!("设置开机自启失败：{error}"), Tone::Bad);
+        }
+    }
 }
 
 /// The proxy the app will hand to Antigravity (tracked where it is read).
@@ -698,32 +733,67 @@ fn insert_account(email: &str, refresh_token: &str) -> u32 {
     id
 }
 
-fn set_quota(id: u32, snapshot: google::AccountQuotaSnapshot) {
-    update_account(id, |account| {
-        let mut next_models = snapshot.models;
-        for row in &mut next_models {
-            if let Some(prev) = account.models.iter().find(|m| m.name == row.name) {
-                if !row.is_weekly_only
-                    && row.weekly_remaining.is_none()
-                    && prev.weekly_remaining.is_some()
-                {
-                    row.weekly_remaining = prev.weekly_remaining;
-                    row.weekly_reset = prev.weekly_reset.clone();
-                } else if row.is_weekly_only
-                    && !prev.is_weekly_only
-                    && !row.name.to_lowercase().contains("argon")
-                {
-                    row.remaining = prev.remaining;
-                    row.reset = prev.reset.clone();
-                    row.is_weekly_only = false;
+fn unexpired_reset(reset: &Option<String>, now_ms: i64) -> Option<String> {
+    reset.as_ref().and_then(|ts| {
+        crate::format::parse_rfc3339(ts)
+            .filter(|&at| at > now_ms)
+            .map(|_| ts.clone())
+    })
+}
+
+fn merge_quota_models(
+    prev_models: &[ModelQuota],
+    mut next_models: Vec<ModelQuota>,
+    now_ms: i64,
+) -> Vec<ModelQuota> {
+    for row in &mut next_models {
+        let prev = prev_models
+            .iter()
+            .find(|m| m.name == row.name)
+            .or_else(|| prev_models.iter().find(|m| google::same_quota_bucket(&m.name, &row.name)));
+        if let Some(prev) = prev {
+            if !row.is_weekly_only
+                && row.weekly_remaining.is_none()
+                && prev.weekly_remaining.is_some()
+            {
+                row.weekly_remaining = prev.weekly_remaining;
+                row.weekly_reset = prev.weekly_reset.clone();
+            } else if row.is_weekly_only
+                && !prev.is_weekly_only
+                && !row.name.to_lowercase().contains("argon")
+            {
+                row.remaining = prev.remaining;
+                row.reset = prev.reset.clone();
+                row.is_weekly_only = false;
+            }
+
+            if row.reset.is_none() {
+                if row.is_weekly_only {
+                    row.reset = unexpired_reset(&prev.weekly_reset, now_ms)
+                        .or_else(|| unexpired_reset(&prev.reset, now_ms));
+                } else if !prev.is_weekly_only {
+                    row.reset = unexpired_reset(&prev.reset, now_ms);
+                }
+            }
+            if (row.is_weekly_only || row.weekly_remaining.is_some()) && row.weekly_reset.is_none() {
+                row.weekly_reset = unexpired_reset(&prev.weekly_reset, now_ms);
+                if row.is_weekly_only && row.reset.is_none() {
+                    row.reset = row.weekly_reset.clone();
                 }
             }
         }
-        account.models = next_models;
+    }
+    next_models
+}
+
+fn set_quota(id: u32, snapshot: google::AccountQuotaSnapshot) {
+    let now_ms = unix_ms() as i64;
+    update_account(id, |account| {
+        account.models = merge_quota_models(&account.models, snapshot.models, now_ms);
         if let Some(tier) = snapshot.tier {
             account.tier = Some(tier);
         }
-        account.fetched_at = Some(unix_ms() as i64);
+        account.fetched_at = Some(now_ms);
         account.error = None;
         account.needs_login = false;
     });
@@ -1096,6 +1166,73 @@ mod tests {
             .and_then(|json| serde_json::from_str::<Saved>(&json).ok())
             .expect("persisted saved state");
         assert_eq!(persisted.last_used_email, None);
+    }
+
+    #[test]
+    fn merge_quota_models_preserves_unexpired_resets_and_drops_expired_on_refresh() {
+        let now_ms = crate::format::parse_rfc3339("2026-11-25T10:00:00Z").expect("now");
+        let prev = vec![
+            ModelQuota {
+                name: "Gemini".to_owned(),
+                remaining: 0.84,
+                reset: Some("2026-11-25T09:30:00Z".to_owned()), // expired
+                weekly_remaining: Some(0.88),
+                weekly_reset: Some("2026-12-02T00:00:00Z".to_owned()), // unexpired
+                is_weekly_only: false,
+            },
+            ModelQuota {
+                name: "Claude 4.6 / GPT".to_owned(),
+                remaining: 0.90,
+                reset: Some("2026-11-25T13:00:00Z".to_owned()), // unexpired
+                weekly_remaining: Some(0.95),
+                weekly_reset: Some("2026-12-01T18:00:00Z".to_owned()), // unexpired
+                is_weekly_only: false,
+            },
+        ];
+
+        // Refresh returns 100% with omitted resetTime fields and a renamed Claude label.
+        let next = vec![
+            ModelQuota {
+                name: "Gemini".to_owned(),
+                remaining: 1.0,
+                reset: None,
+                weekly_remaining: Some(1.0),
+                weekly_reset: None,
+                is_weekly_only: false,
+            },
+            ModelQuota {
+                name: "Claude 5.5 / GPT".to_owned(),
+                remaining: 1.0,
+                reset: None,
+                weekly_remaining: Some(1.0),
+                weekly_reset: None,
+                is_weekly_only: false,
+            },
+        ];
+
+        let merged = merge_quota_models(&prev, next, now_ms);
+        assert_eq!(merged[0].name, "Gemini");
+        // Expired 5H reset must NOT be resurrected; unexpired weekly reset IS preserved.
+        assert_eq!(merged[0].reset, None);
+        assert_eq!(merged[0].weekly_reset.as_deref(), Some("2026-12-02T00:00:00Z"));
+
+        // Renamed Claude bucket still matches prev via same_quota_bucket and keeps unexpired resets.
+        assert_eq!(merged[1].name, "Claude 5.5 / GPT");
+        assert_eq!(merged[1].reset.as_deref(), Some("2026-11-25T13:00:00Z"));
+        assert_eq!(merged[1].weekly_reset.as_deref(), Some("2026-12-01T18:00:00Z"));
+
+        // Fresh upstream reset timestamps always win over prev.
+        let fresh = vec![ModelQuota {
+            name: "Claude 5.5 / GPT".to_owned(),
+            remaining: 0.80,
+            reset: Some("2026-11-25T15:00:00Z".to_owned()),
+            weekly_remaining: Some(0.90),
+            weekly_reset: Some("2026-12-03T00:00:00Z".to_owned()),
+            is_weekly_only: false,
+        }];
+        let merged_fresh = merge_quota_models(&prev, fresh, now_ms);
+        assert_eq!(merged_fresh[0].reset.as_deref(), Some("2026-11-25T15:00:00Z"));
+        assert_eq!(merged_fresh[0].weekly_reset.as_deref(), Some("2026-12-03T00:00:00Z"));
     }
 }
 

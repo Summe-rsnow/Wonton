@@ -24,7 +24,7 @@ fn start() -> Headless {
 #[test]
 fn shows_version_and_updated_toolbar_controls() {
     let app = start();
-    assert!(app.screen().shows("v1.2.3"));
+    assert!(app.screen().shows("v1.3.0"));
     for label in [
         "关于",
         "测试",
@@ -43,6 +43,11 @@ fn shows_version_and_updated_toolbar_controls() {
             "missing toolbar button: {label}"
         );
     }
+
+    assert!(
+        app.screen().matches("role:switch[开机自启]").unwrap(),
+        "missing autostart toggle switch in header"
+    );
 
     // Verify title bar order: About icon button sits to the left of the theme switcher.
     let layout = app.screen().layout_nodes();
@@ -87,7 +92,7 @@ fn the_about_dialog_shows_version_links_and_update_check() {
     let mut app = start();
     app.press("role:button[关于]").unwrap();
     app.wait_for("版本更新").unwrap();
-    assert!(app.screen().shows("v1.2.3"));
+    assert!(app.screen().shows("v1.3.0"));
     assert!(app.screen().shows("Apache-2.0"));
     assert!(app.screen().matches("role:button[检测更新]").unwrap());
     assert!(app.screen().matches("role:link[Summe-rsnow/Wonton]").unwrap());
@@ -203,4 +208,28 @@ fn last_used_badge_renders_on_persisted_account_and_clears_on_delete() {
     assert!(!app.screen().shows("d@e.f"));
     assert!(!app.screen().shows("上次使用"));
     assert!(app.screen().shows("a@b.c"));
+}
+
+#[test]
+fn autostart_toggle_updates_state_and_restores_os_setting() {
+    struct RestoreGuard(bool);
+    impl Drop for RestoreGuard {
+        fn drop(&mut self) {
+            let _ = bento::autostart::set_autostart_enabled("Wonton", self.0);
+        }
+    }
+
+    let original = bento::autostart::is_autostart_enabled("Wonton").unwrap_or(false);
+    let _guard = RestoreGuard(original);
+
+    let mut app = start();
+    assert!(app.screen().matches("role:switch[开机自启]").unwrap());
+
+    app.press("role:switch[开机自启]").unwrap();
+    let expected_first = if original { "已关闭开机自启" } else { "已开启开机自启" };
+    app.wait_for(expected_first).unwrap();
+
+    app.press("role:switch[开机自启]").unwrap();
+    let expected_second = if original { "已开启开机自启" } else { "已关闭开机自启" };
+    app.wait_for(expected_second).unwrap();
 }

@@ -426,6 +426,13 @@ fn classify_bucket(name: &str) -> Option<QuotaBucket> {
     }
 }
 
+pub(crate) fn same_quota_bucket(a: &str, b: &str) -> bool {
+    match (classify_bucket(a), classify_bucket(b)) {
+        (Some(ba), Some(bb)) => ba == bb,
+        _ => a == b,
+    }
+}
+
 fn is_legacy_quota_model(name: &str, bucket: QuotaBucket) -> bool {
     let lower = name.trim().to_lowercase();
     if lower.contains("1.5")
@@ -546,6 +553,7 @@ fn claude_bucket_label<'a>(names: impl IntoIterator<Item = &'a str>) -> String {
 fn aggregate_bucket(label: &str, items: &[&ModelQuota]) -> Option<ModelQuota> {
     let first = *items.first()?;
     let mut chosen = first;
+    let mut chosen_reset: Option<String> = first.reset.clone();
     let mut weekly_rem: Option<f32> = None;
     let mut weekly_reset: Option<String> = None;
     let mut weekly_only = first.is_weekly_only;
@@ -553,10 +561,15 @@ fn aggregate_bucket(label: &str, items: &[&ModelQuota]) -> Option<ModelQuota> {
     for &item in items {
         let lower_rem = item.remaining < chosen.remaining - f32::EPSILON;
         let same_rem_with_reset = (item.remaining - chosen.remaining).abs() <= f32::EPSILON
-            && chosen.reset.is_none()
+            && chosen_reset.is_none()
             && item.reset.is_some();
         if lower_rem || same_rem_with_reset {
             chosen = item;
+            if item.reset.is_some() {
+                chosen_reset = item.reset.clone();
+            }
+        } else if chosen_reset.is_none() && item.reset.is_some() {
+            chosen_reset = item.reset.clone();
         }
         if !item.is_weekly_only {
             weekly_only = false;
@@ -573,6 +586,10 @@ fn aggregate_bucket(label: &str, items: &[&ModelQuota]) -> Option<ModelQuota> {
             };
             if replace_w {
                 weekly_rem = Some(w_rem);
+                if item.weekly_reset.is_some() {
+                    weekly_reset = item.weekly_reset.clone();
+                }
+            } else if weekly_reset.is_none() && item.weekly_reset.is_some() {
                 weekly_reset = item.weekly_reset.clone();
             }
         }
@@ -580,7 +597,7 @@ fn aggregate_bucket(label: &str, items: &[&ModelQuota]) -> Option<ModelQuota> {
     Some(ModelQuota {
         name: label.to_owned(),
         remaining: chosen.remaining,
-        reset: chosen.reset.clone(),
+        reset: chosen_reset,
         weekly_remaining: weekly_rem,
         weekly_reset,
         is_weekly_only: weekly_only,
@@ -916,12 +933,15 @@ fn pick_min_window(items: impl Iterator<Item = (f32, Option<String>)>) -> Option
         best = match best {
             None => Some((rem, reset)),
             Some((b_rem, b_reset)) => {
-                if rem < b_rem - f32::EPSILON
-                    || ((rem - b_rem).abs() <= f32::EPSILON && b_reset.is_none() && reset.is_some())
+                if rem < b_rem - f32::EPSILON {
+                    Some((rem, reset.or(b_reset)))
+                } else if (rem - b_rem).abs() <= f32::EPSILON
+                    && b_reset.is_none()
+                    && reset.is_some()
                 {
                     Some((rem, reset))
                 } else {
-                    Some((b_rem, b_reset))
+                    Some((b_rem, b_reset.or(reset)))
                 }
             }
         };
@@ -1034,6 +1054,35 @@ fn collect_official_supported_ids(root: &Value) -> std::collections::HashSet<Str
     ids
 }
 
+const FIVE_HOUR_WINDOW_LIMIT_MS: i64 = 6 * 3_600_000;
+
+/// Splits per-model `resetTime` values from `fetchAvailableModels` into
+/// separate 5H (`<= 6h` from `now_ms`) and weekly (`> 6h` from `now_ms`)
+/// fallback candidates so missing `resetTime` fields in
+/// `retrieveUserQuotaSummary` (common on 100% buckets) can be recovered
+/// without mixing 5H and weekly windows or polluting `remainingFraction`.
+fn model_reset_fallbacks(items: &[&ModelQuota], now_ms: i64) -> (Option<String>, Option<String>) {
+    let mut five_hour: Option<(i64, String)> = None;
+    let mut weekly: Option<(i64, String)> = None;
+    for item in items {
+        let Some(reset) = item.reset.as_deref() else {
+            continue;
+        };
+        let Some(reset_ms) = crate::format::parse_rfc3339(reset) else {
+            continue;
+        };
+        let target = if reset_ms - now_ms > FIVE_HOUR_WINDOW_LIMIT_MS {
+            &mut weekly
+        } else {
+            &mut five_hour
+        };
+        if target.as_ref().is_none_or(|(best_ms, _)| reset_ms < *best_ms) {
+            *target = Some((reset_ms, reset.to_owned()));
+        }
+    }
+    (five_hour.map(|(_, ts)| ts), weekly.map(|(_, ts)| ts))
+}
+
 /// Resolves subscription tier and the three quota pools (`Gemini`,
 /// `Gemini Argon`, `Claude [4.6/5.5] / GPT`) from `fetchAvailableModels`,
 /// `retrieveUserQuotaSummary`, and `loadCodeAssist`.
@@ -1041,6 +1090,20 @@ pub fn build_account_quotas(
     models_body: &str,
     groups: Option<&[SummaryGroup]>,
     detected_tier: Option<AccountTier>,
+) -> Result<AccountQuotaSnapshot, String> {
+    build_account_quotas_at(
+        models_body,
+        groups,
+        detected_tier,
+        nsh_core::time::unix_ms() as i64,
+    )
+}
+
+fn build_account_quotas_at(
+    models_body: &str,
+    groups: Option<&[SummaryGroup]>,
+    detected_tier: Option<AccountTier>,
+    now_ms: i64,
 ) -> Result<AccountQuotaSnapshot, String> {
     let catalog = parse_models_catalog(models_body, true)?;
 
@@ -1142,6 +1205,7 @@ pub fn build_account_quotas(
             fallback[slot].iter().collect()
         };
         let model_val = aggregate_bucket(label, &model_refs).map(|q| (q.remaining, q.reset));
+        let (fallback_5h_reset, fallback_weekly_reset) = model_reset_fallbacks(&model_refs, now_ms);
 
         if bucket == QuotaBucket::ClaudeGpt && !has_supported_claude && model_val.is_none() {
             continue;
@@ -1159,10 +1223,7 @@ pub fn build_account_quotas(
                 let is_weekly_window = m_reset
                     .as_deref()
                     .and_then(crate::format::parse_rfc3339)
-                    .is_some_and(|reset_ms| {
-                        let now_ms = nsh_core::time::unix_ms() as i64;
-                        reset_ms - now_ms > 6 * 3_600_000
-                    });
+                    .is_some_and(|reset_ms| reset_ms - now_ms > FIVE_HOUR_WINDOW_LIMIT_MS);
                 if is_weekly_window {
                     ModelQuota {
                         name: label.to_owned(),
@@ -1192,13 +1253,16 @@ pub fn build_account_quotas(
             } else {
                 model_val
             };
-            weekly.map(|(w_rem, w_reset)| ModelQuota {
-                name: label.to_owned(),
-                remaining: w_rem,
-                reset: w_reset.clone(),
-                weekly_remaining: Some(w_rem),
-                weekly_reset: w_reset,
-                is_weekly_only: true,
+            weekly.map(|(w_rem, w_reset)| {
+                let w_reset = w_reset.or(fallback_weekly_reset).or(fallback_5h_reset);
+                ModelQuota {
+                    name: label.to_owned(),
+                    remaining: w_rem,
+                    reset: w_reset.clone(),
+                    weekly_remaining: Some(w_rem),
+                    weekly_reset: w_reset,
+                    is_weekly_only: true,
+                }
             })
         } else if bucket == QuotaBucket::Argon {
             // Argon has a weekly quota window only (no 5H window).
@@ -1215,32 +1279,38 @@ pub fn build_account_quotas(
                         .unwrap_or((1.0, None))
                 })
             });
-            weekly.map(|(w_rem, w_reset)| ModelQuota {
-                name: label.to_owned(),
-                remaining: w_rem,
-                reset: w_reset.clone(),
-                weekly_remaining: Some(w_rem),
-                weekly_reset: w_reset,
-                is_weekly_only: true,
-            })
-        } else if has_real_groups {
-            match (group_5h, group_weekly) {
-                (Some((h_rem, h_reset)), w) => Some(ModelQuota {
-                    name: label.to_owned(),
-                    remaining: h_rem,
-                    reset: h_reset,
-                    weekly_remaining: w.as_ref().map(|(r, _)| *r),
-                    weekly_reset: w.and_then(|(_, rs)| rs),
-                    is_weekly_only: false,
-                }),
-                (None, Some((w_rem, w_reset))) => Some(ModelQuota {
+            weekly.map(|(w_rem, w_reset)| {
+                let w_reset = w_reset.or(fallback_weekly_reset).or(fallback_5h_reset);
+                ModelQuota {
                     name: label.to_owned(),
                     remaining: w_rem,
                     reset: w_reset.clone(),
                     weekly_remaining: Some(w_rem),
                     weekly_reset: w_reset,
                     is_weekly_only: true,
+                }
+            })
+        } else if has_real_groups {
+            match (group_5h, group_weekly) {
+                (Some((h_rem, h_reset)), w) => Some(ModelQuota {
+                    name: label.to_owned(),
+                    remaining: h_rem,
+                    reset: h_reset.or(fallback_5h_reset),
+                    weekly_remaining: w.as_ref().map(|(r, _)| *r),
+                    weekly_reset: w.and_then(|(_, rs)| rs.or(fallback_weekly_reset)),
+                    is_weekly_only: false,
                 }),
+                (None, Some((w_rem, w_reset))) => {
+                    let w_reset = w_reset.or(fallback_weekly_reset);
+                    Some(ModelQuota {
+                        name: label.to_owned(),
+                        remaining: w_rem,
+                        reset: w_reset.clone(),
+                        weekly_remaining: Some(w_rem),
+                        weekly_reset: w_reset,
+                        is_weekly_only: true,
+                    })
+                }
                 (None, None) => model_quota(),
             }
         } else {
@@ -1893,6 +1963,117 @@ mod tests {
             assert!((res.models[0].remaining - 0.97).abs() < 1e-4);
             assert_eq!(res.models[0].weekly_remaining, Some(0.98));
         }
+    }
+
+    #[test]
+    fn summary_omits_reset_time_at_100_percent_falls_back_to_matching_model_reset_window() {
+        let now_ms = crate::format::parse_rfc3339("2026-11-25T10:00:00Z").expect("now");
+        let summary_json = r#"{
+            "groups": [
+                {
+                    "displayName": "Gemini Models",
+                    "buckets": [
+                        {"bucketId":"gemini-5h","window":"5h","remainingFraction":0.84,"resetTime":"2026-11-25T12:08:00Z"},
+                        {"bucketId":"gemini-weekly","window":"weekly","remainingFraction":0.88,"resetTime":"2026-12-02T01:00:00Z"}
+                    ]
+                },
+                {
+                    "displayName": "Claude and GPT models",
+                    "buckets": [
+                        {"bucketId":"3p-5h","window":"5h","remainingFraction":1.0},
+                        {"bucketId":"3p-weekly","window":"weekly","remainingFraction":1.0}
+                    ]
+                }
+            ]
+        }"#;
+        let groups = parse_quota_summary(summary_json);
+
+        // Both a 5H reset (<= 6h) and a weekly reset (> 6h) present across Claude/GPT models.
+        // Remaining fractions must stay 1.0 (from summary), while each window recovers its own resetTime.
+        let models_both = r#"{
+            "models": {
+                "gemini-3.1-pro-high": {"displayName":"Gemini 3.1 Pro (High)","quotaInfo":{"remainingFraction":0.84,"resetTime":"2026-11-25T12:08:00Z"}},
+                "claude-opus-5-5-high": {"displayName":"Claude Opus 5.5 (High)","quotaInfo":{"remainingFraction":0.30,"resetTime":"2026-11-25T13:00:00Z"}},
+                "gpt-oss-120b-medium": {"displayName":"GPT-OSS 120B (Medium)","quotaInfo":{"remainingFraction":0.30,"resetTime":"2026-12-01T10:00:00Z"}}
+            }
+        }"#;
+        let res = build_account_quotas_at(models_both, Some(&groups), Some(AccountTier::Pro), now_ms)
+            .expect("both fallbacks");
+        let claude = res.models.iter().find(|m| m.name == "Claude 5.5 / GPT").expect("claude");
+        assert!((claude.remaining - 1.0).abs() < 1e-4);
+        assert_eq!(claude.reset.as_deref(), Some("2026-11-25T13:00:00Z"));
+        assert_eq!(claude.weekly_remaining, Some(1.0));
+        assert_eq!(claude.weekly_reset.as_deref(), Some("2026-12-01T10:00:00Z"));
+
+        // When fetchAvailableModels only has a weekly reset (> 6h), it fills weekly_reset and does NOT pollute 5H reset.
+        let models_weekly_only = r#"{
+            "models": {
+                "claude-opus-5-5-high": {"displayName":"Claude Opus 5.5 (High)","quotaInfo":{"remainingFraction":0.30,"resetTime":"2026-12-01T10:00:00Z"}}
+            }
+        }"#;
+        let res_w = build_account_quotas_at(
+            models_weekly_only,
+            Some(&groups),
+            Some(AccountTier::Pro),
+            now_ms,
+        )
+        .expect("weekly fallback only");
+        let claude_w = res_w.models.iter().find(|m| m.name == "Claude 5.5").expect("claude");
+        assert_eq!(claude_w.reset, None);
+        assert_eq!(claude_w.weekly_reset.as_deref(), Some("2026-12-01T10:00:00Z"));
+
+        // When fetchAvailableModels only has a 5H reset (<= 6h), it fills 5H reset and does NOT pollute weekly_reset.
+        let models_5h_only = r#"{
+            "models": {
+                "claude-sonnet-4-6": {"displayName":"Claude Sonnet 4.6","quotaInfo":{"remainingFraction":1.0,"resetTime":"2026-11-25T14:30:00Z"}}
+            }
+        }"#;
+        let res_5h = build_account_quotas_at(
+            models_5h_only,
+            Some(&groups),
+            Some(AccountTier::Pro),
+            now_ms,
+        )
+        .expect("5h fallback only");
+        let claude_5h = res_5h.models.iter().find(|m| m.name == "Claude 4.6").expect("claude");
+        assert_eq!(claude_5h.reset.as_deref(), Some("2026-11-25T14:30:00Z"));
+        assert_eq!(claude_5h.weekly_reset, None);
+    }
+
+    #[test]
+    fn aggregate_bucket_and_pick_min_window_preserve_reset_across_variants() {
+        let a = ModelQuota {
+            name: "Claude Opus 5.5".to_owned(),
+            remaining: 0.7,
+            reset: None,
+            weekly_remaining: Some(0.8),
+            weekly_reset: None,
+            is_weekly_only: false,
+        };
+        let b = ModelQuota {
+            name: "GPT-OSS 120B".to_owned(),
+            remaining: 0.9,
+            reset: Some("2026-11-25T14:00:00Z".to_owned()),
+            weekly_remaining: Some(0.95),
+            weekly_reset: Some("2026-12-01T00:00:00Z".to_owned()),
+            is_weekly_only: false,
+        };
+        let agg = aggregate_bucket("Claude 5.5 / GPT", &[&a, &b]).expect("agg");
+        assert!((agg.remaining - 0.7).abs() < 1e-4);
+        assert_eq!(agg.reset.as_deref(), Some("2026-11-25T14:00:00Z"));
+        assert_eq!(agg.weekly_remaining, Some(0.8));
+        assert_eq!(agg.weekly_reset.as_deref(), Some("2026-12-01T00:00:00Z"));
+
+        let picked = pick_min_window(
+            [
+                (0.7_f32, None),
+                (0.9_f32, Some("2026-11-25T14:00:00Z".to_owned())),
+            ]
+            .into_iter(),
+        )
+        .expect("picked");
+        assert!((picked.0 - 0.7).abs() < 1e-4);
+        assert_eq!(picked.1.as_deref(), Some("2026-11-25T14:00:00Z"));
     }
 }
 
