@@ -5,9 +5,9 @@ use std::time::Duration;
 
 use bento::drag_list::DragList;
 use bento::shell::{
-    about_icon_button, autostart_menu_item, bind_close_handler, close_behavior_submenu,
-    confirm_close_dialog, remember_window_placement, title_bar_brand, title_bar_right_with_theme,
-    NoticeCenter,
+    about_icon_button, autostart_tray_item, bind_close_handler, close_behavior_submenu,
+    confirm_close_dialog, remember_window_placement, title_bar_autostart_toggle, title_bar_brand,
+    title_bar_right_with_theme, NoticeCenter,
 };
 use nsh_base::theme;
 use nsh_core::Cursor;
@@ -55,7 +55,6 @@ pub(crate) fn Screen() -> impl IntoElement {
         let win_about = main_window.clone();
         effect(move || {
             let behavior = store::close_behavior();
-            let autostart = store::autostart();
             let count = store::account_count();
             let busy = store::busy();
             let tooltip = if count > 0 {
@@ -81,8 +80,8 @@ pub(crate) fn Screen() -> impl IntoElement {
                             about_dialog_open.set(true);
                         }),
                         MenuItem::separator(),
+                        autostart_tray_item(),
                         close_behavior_submenu(behavior, store::set_close_behavior),
-                        autostart_menu_item(autostart, store::set_autostart),
                         MenuItem::separator(),
                         MenuItem::new("退出 Wonton").on_select(quit),
                     ]),
@@ -152,18 +151,7 @@ fn header(about_dialog_open: Signal<bool>) -> impl IntoElement {
                 .text_color(move || theme().muted_foreground),
         )
         .child(view().flex_1())
-        .child(
-            view()
-                .window_drag(false)
-                .flex_row()
-                .items_center()
-                .child(toggle_switch(
-                    store::autostart,
-                    "开机自启",
-                    Some("开机自启"),
-                    store::set_autostart,
-                )),
-        )
+        .child(title_bar_autostart_toggle())
         .child(title_bar_right_with_theme(
             about_icon_button(
                 crate::APP_META,
@@ -765,7 +753,7 @@ mod tests {
             ThemeMode::Light,
         );
 
-        let mut config = EngineConfig::new(Root::of::<crate::App>());
+        let mut config = EngineConfig::new(Root::of::<crate::TestApp>());
         config.viewport = size(px(860.0), px(640.0));
         config.environment.os = Os::Windows;
         config.environment.idiom = Idiom::Desktop;

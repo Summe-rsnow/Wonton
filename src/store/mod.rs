@@ -137,7 +137,6 @@ struct State {
     proxy: ProxyConfig,
     theme: ThemeMode,
     close_behavior: CloseBehavior,
-    autostart: bool,
     last_used_email: Option<String>,
     busy: bool,
     proxy_testing: bool,
@@ -157,7 +156,6 @@ impl Default for State {
             proxy: ProxyConfig::default(),
             theme: ThemeMode::System,
             close_behavior: CloseBehavior::Ask,
-            autostart: false,
             last_used_email: None,
             busy: false,
             proxy_testing: false,
@@ -177,15 +175,12 @@ fn state() -> Signal<State> {
 
 /// Reads the saved accounts, proxy, theme, and close preference, once, when the app starts.
 pub(crate) fn load() {
-    let autostart_enabled = match bento::autostart::is_autostart_enabled(crate::APP_META.name) {
-        Ok(enabled) => enabled,
-        Err(error) => {
-            log::warn!("failed to query autostart state: {error}");
-            false
-        }
-    };
-    state().update(|state| state.autostart = autostart_enabled);
+    bento::shell::init_autostart("com.xcmm.wonton", Some("Wonton"));
+    load_without_os_autostart();
+}
 
+/// Reads persisted app state without querying the OS autostart registry (used by headless tests).
+pub(crate) fn load_without_os_autostart() {
     let Some(raw) = Storage::get_item(STORAGE_KEY) else {
         set_color_scheme(Appearance::System);
         return;
@@ -406,30 +401,6 @@ pub(crate) fn close_behavior() -> CloseBehavior {
 pub(crate) fn set_close_behavior(behavior: CloseBehavior) {
     state().update(|state| state.close_behavior = behavior);
     save();
-}
-
-/// Whether launch-at-login (开机自启) is currently enabled in the OS.
-pub(crate) fn autostart() -> bool {
-    state().with(|state| state.autostart)
-}
-
-/// Toggles OS launch-at-login (开机自启), syncing UI state on success and
-/// reporting errors via notice without panicking.
-pub(crate) fn set_autostart(enabled: bool) {
-    match bento::autostart::set_autostart_enabled(crate::APP_META.name, enabled) {
-        Ok(()) => {
-            state().update(|state| state.autostart = enabled);
-            if enabled {
-                set_notice("已开启开机自启", Tone::Ok);
-            } else {
-                set_notice("已关闭开机自启", Tone::Info);
-            }
-        }
-        Err(error) => {
-            log::warn!("failed to set autostart={enabled}: {error}");
-            set_notice(format!("设置开机自启失败：{error}"), Tone::Bad);
-        }
-    }
 }
 
 /// The proxy the app will hand to Antigravity (tracked where it is read).

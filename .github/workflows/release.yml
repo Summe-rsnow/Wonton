@@ -34,6 +34,73 @@ jobs:
         shell: pwsh
         run: nsh package --target windows
 
+      - name: Customize Windows installer (admin, dir page, autostart cleanup)
+        shell: pwsh
+        run: |
+          $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -First 1)
+          if (-not $iscc) {
+            $iscc = @(
+              "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+              "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+            ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+          }
+          if (-not $iscc) {
+            throw "Inno Setup 6 (ISCC.exe) not found; cannot rebuild setup installer"
+          }
+
+          $uninstallCode = @'
+          procedure NshDeleteRunValueIfMatches(const ValueName, Exe: String);
+          var
+            Command: String;
+          begin
+            if not RegQueryStringValue(HKEY_CURRENT_USER, 'Software\Microsoft\Windows\CurrentVersion\Run', ValueName, Command) then
+              Exit;
+            if (CompareText(NshProgram(Command), Exe) = 0)
+              or (CompareText(NshProgram(NshExpand(Command)), Exe) = 0) then
+              RegDeleteValue(HKEY_CURRENT_USER, 'Software\Microsoft\Windows\CurrentVersion\Run', ValueName);
+          end;
+
+          procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+          var
+            Exe: String;
+          begin
+            if CurUninstallStep <> usUninstall then
+              Exit;
+            Exe := ExpandConstant('{app}') + '\Wonton.exe';
+            NshDeleteRunValueIfMatches('com.xcmm.wonton', Exe);
+            NshDeleteRunValueIfMatches('Wonton', Exe);
+          end;
+          '@
+
+          $issFiles = Get-ChildItem ".nsh/out/*.iss"
+          if (-not $issFiles) {
+            throw "No .iss files found under .nsh/out/"
+          }
+
+          $issFiles | ForEach-Object {
+            $issContent = Get-Content $_.FullName -Raw
+            if ($issContent -notmatch '(?m)^PrivilegesRequired=lowest\r?$') {
+              throw "Expected PrivilegesRequired=lowest in $($_.FullName)"
+            }
+            if ($issContent -notmatch '(?m)^DisableDirPage=auto\r?$') {
+              throw "Expected DisableDirPage=auto in $($_.FullName)"
+            }
+            $uninstallPattern = '(?ms)^procedure CurUninstallStepChanged\(CurUninstallStep: TUninstallStep\);.*?^end;\s*$'
+            if ($issContent -notmatch $uninstallPattern) {
+              throw "Expected CurUninstallStepChanged procedure in $($_.FullName)"
+            }
+
+            $issContent = $issContent -replace '(?m)^PrivilegesRequired=lowest\r?$', "PrivilegesRequired=admin"
+            $issContent = $issContent -replace '(?m)^DisableDirPage=auto\r?$', "DisableDirPage=no"
+            $issContent = [regex]::Replace($issContent, $uninstallPattern, $uninstallCode)
+            Set-Content -Path $_.FullName -Value $issContent -Encoding UTF8
+
+            & $iscc "/O.nsh/out" $_.FullName
+            if ($LASTEXITCODE -ne 0) {
+              throw "ISCC.exe failed for $($_.FullName) with exit code $LASTEXITCODE"
+            }
+          }
+
       - name: Upload Release Assets
         uses: softprops/action-gh-release@v2
         with:

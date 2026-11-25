@@ -12,7 +12,7 @@ use nsh_testing::{Headless, MemoryStorage};
 const GONE: Duration = Duration::from_secs(5);
 
 fn start() -> Headless {
-    let mut config = EngineConfig::new(Root::of::<nsh_app_wonton::App>());
+    let mut config = EngineConfig::new(Root::of::<nsh_app_wonton::TestApp>());
     config.viewport = size(px(860.0), px(640.0));
     config.environment.os = Os::Windows;
     config.environment.idiom = Idiom::Desktop;
@@ -24,7 +24,7 @@ fn start() -> Headless {
 #[test]
 fn shows_version_and_updated_toolbar_controls() {
     let app = start();
-    assert!(app.screen().shows("v1.3.0"));
+    assert!(app.screen().shows("v1.3.1"));
     for label in [
         "关于",
         "测试",
@@ -92,7 +92,7 @@ fn the_about_dialog_shows_version_links_and_update_check() {
     let mut app = start();
     app.press("role:button[关于]").unwrap();
     app.wait_for("版本更新").unwrap();
-    assert!(app.screen().shows("v1.3.0"));
+    assert!(app.screen().shows("v1.3.1"));
     assert!(app.screen().shows("Apache-2.0"));
     assert!(app.screen().matches("role:button[检测更新]").unwrap());
     assert!(app.screen().matches("role:link[Summe-rsnow/Wonton]").unwrap());
@@ -167,7 +167,7 @@ fn last_used_badge_renders_on_persisted_account_and_clears_on_delete() {
         Some("d@e.f"),
     );
 
-    let mut config = EngineConfig::new(Root::of::<nsh_app_wonton::App>());
+    let mut config = EngineConfig::new(Root::of::<nsh_app_wonton::TestApp>());
     config.viewport = size(px(860.0), px(640.0));
     config.environment.os = Os::Windows;
     config.environment.idiom = Idiom::Desktop;
@@ -211,25 +211,13 @@ fn last_used_badge_renders_on_persisted_account_and_clears_on_delete() {
 }
 
 #[test]
-fn autostart_toggle_updates_state_and_restores_os_setting() {
-    struct RestoreGuard(bool);
-    impl Drop for RestoreGuard {
-        fn drop(&mut self) {
-            let _ = bento::autostart::set_autostart_enabled("Wonton", self.0);
-        }
-    }
-
-    let original = bento::autostart::is_autostart_enabled("Wonton").unwrap_or(false);
-    let _guard = RestoreGuard(original);
-
+fn autostart_toggle_updates_state_in_test_mode_without_os_mutation() {
     let mut app = start();
     assert!(app.screen().matches("role:switch[开机自启]").unwrap());
 
     app.press("role:switch[开机自启]").unwrap();
-    let expected_first = if original { "已关闭开机自启" } else { "已开启开机自启" };
-    app.wait_for(expected_first).unwrap();
+    app.wait_for("已开启开机自启").unwrap();
 
     app.press("role:switch[开机自启]").unwrap();
-    let expected_second = if original { "已开启开机自启" } else { "已关闭开机自启" };
-    app.wait_for(expected_second).unwrap();
+    app.wait_for("已关闭开机自启").unwrap();
 }

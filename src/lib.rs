@@ -32,19 +32,35 @@ fn native(registry: &mut Registry) {
     registry.register::<App>();
 }
 
-/// The app's root: the whole surface, on the theme's background. The saved
-/// accounts are read once, before the screen is built.
-#[component]
-pub fn App() -> impl IntoElement {
+fn app_root(test_autostart: Option<bool>) -> impl IntoElement {
     bento::shell::init_desktop_window(720.0, 560.0, 48.0);
 
-    store::load();
+    match test_autostart {
+        Some(initial) => {
+            store::load_without_os_autostart();
+            bento::shell::init_autostart_for_test(initial);
+        }
+        None => store::load(),
+    }
     view()
         .flex_1()
         .bg(move || theme().background)
         .text_color(move || theme().foreground)
         .p_safe_area()
         .child(shell::screen())
+}
+
+/// The app's root: the whole surface, on the theme's background. The saved
+/// accounts are read once, before the screen is built.
+#[component]
+pub fn App() -> impl IntoElement {
+    app_root(None)
+}
+
+#[doc(hidden)]
+#[component]
+pub fn TestApp() -> impl IntoElement {
+    app_root(Some(false))
 }
 
 #[doc(hidden)]
