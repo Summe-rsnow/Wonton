@@ -33,8 +33,6 @@ fn native(registry: &mut Registry) {
 }
 
 fn app_root(test_autostart: Option<bool>) -> impl IntoElement {
-    bento::shell::init_desktop_window(720.0, 560.0, 48.0);
-
     match test_autostart {
         Some(initial) => {
             store::load_without_os_autostart();
@@ -42,12 +40,14 @@ fn app_root(test_autostart: Option<bool>) -> impl IntoElement {
         }
         None => store::load(),
     }
-    view()
-        .flex_1()
-        .bg(move || theme().background)
-        .text_color(move || theme().foreground)
-        .p_safe_area()
-        .child(shell::screen())
+    bento::shell::desktop_window(APP_META.name, 720.0, 560.0, 48.0, || {
+        view()
+            .flex_1()
+            .bg(move || theme().background)
+            .text_color(move || theme().foreground)
+            .p_safe_area()
+            .child(shell::screen())
+    })
 }
 
 /// The app's root: the whole surface, on the theme's background. The saved

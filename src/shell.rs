@@ -6,8 +6,8 @@ use std::time::Duration;
 use bento::drag_list::DragList;
 use bento::shell::{
     about_icon_button, autostart_tray_item, bind_close_handler, close_behavior_submenu,
-    confirm_close_dialog, remember_window_placement, title_bar_autostart_toggle, title_bar_brand,
-    title_bar_right_with_theme, NoticeCenter,
+    confirm_close_dialog, remember_window_placement, restore_and_focus_window,
+    title_bar_autostart_toggle, title_bar_brand, title_bar_right_with_theme, NoticeCenter,
 };
 use nsh_base::theme;
 use nsh_core::Cursor;
@@ -45,23 +45,23 @@ pub(crate) fn Screen() -> impl IntoElement {
     notices.install_auto_dismiss();
 
     let main_window = current_window();
+    store::set_main_window(main_window.clone());
     remember_window_placement(main_window.clone(), 720.0, 560.0);
     bind_close_handler(main_window.clone(), store::close_behavior, move || {
         close_prompt_open.set(true);
     });
     {
+        let tray_close_behavior = computed(store::close_behavior);
         let win_click = main_window.clone();
         let win_menu = main_window.clone();
         let win_about = main_window.clone();
+        // Memoize `close_behavior` via `computed` so unrelated mutations on the
+        // monolithic `State` signal (`busy`, `refreshing_ids`, `import_progress`,
+        // `accounts`, selection) never re-run `set_tray` and invalidate Win32
+        // tray menu IDs while `TrackPopupMenuEx` is open.
         effect(move || {
-            let behavior = store::close_behavior();
-            let count = store::account_count();
-            let busy = store::busy();
-            let tooltip = if count > 0 {
-                format!("Wonton v{} · {count} 个账号", crate::APP_VERSION)
-            } else {
-                format!("Wonton v{}", crate::APP_VERSION)
-            };
+            let behavior = tray_close_behavior.get();
+            let tooltip = format!("Wonton v{}", crate::APP_VERSION);
             let win_on_click = win_click.clone();
             let win_on_show = win_menu.clone();
             let win_on_about = win_about.clone();
@@ -69,14 +69,13 @@ pub(crate) fn Screen() -> impl IntoElement {
                 tray()
                     .icon(icons::tray_icon_src())
                     .tooltip(tooltip)
-                    .on_click(move |_| win_on_click.focus())
+                    .on_click(move |_| restore_and_focus_window(&win_on_click))
                     .menu([
-                        MenuItem::new("显示主窗口").on_select(move || win_on_show.focus()),
-                        MenuItem::new("刷新全部账号")
-                            .disabled(busy)
-                            .on_select(store::refresh_all),
+                        MenuItem::new("显示主窗口")
+                            .on_select(move || restore_and_focus_window(&win_on_show)),
+                        MenuItem::new("刷新全部账号").on_select(store::refresh_all),
                         MenuItem::new("关于与检查更新…").on_select(move || {
-                            win_on_about.focus();
+                            restore_and_focus_window(&win_on_about);
                             about_dialog_open.set(true);
                         }),
                         MenuItem::separator(),
@@ -213,6 +212,7 @@ fn proxy_bar(
                 .opacity(move || if store::proxy().enabled { 1.0_f32 } else { 0.45_f32 })
                 .child(
                     text_field(host, "127.0.0.1", move |text: &str| host.set(text.to_owned()))
+                        .select_text_on_focus(true)
                         .label("主机地址")
                         .w(px(136.0)),
                 )
@@ -223,6 +223,7 @@ fn proxy_bar(
                 )
                 .child(
                     text_field(port, "7890", move |text: &str| port.set(text.to_owned()))
+                        .select_text_on_focus(true)
                         .label("端口")
                         .w(px(64.0)),
                 ),
@@ -552,9 +553,7 @@ fn account_card(
         .claim_touches(
             TouchClaim::on_pan(PanActivation {
                 active_offset_y: Some(px(8.0)),
-                active_offset_x: None,
-                fail_offset_x: None,
-                fail_offset_y: None,
+                ..PanActivation::default()
             })
             .ask(|request: &ClaimRequest| {
                 if store::account_count() >= 2 {
@@ -782,5 +781,149 @@ mod tests {
         assert!(!app.screen().shows("d@e.f"));
         assert!(app.screen().shows("g@h.i"));
         assert!(app.screen().matches("role:button[全部刷新]").unwrap());
+    }
+
+    #[test]
+    fn tray_menu_stays_stable_across_busy_flips_and_taskbar_progress_updates_main_window() {
+        use bento::shell::WindowProgressState;
+        use nsh_core::desktop::DesktopCommand;
+        use nsh_core::element::{Environment, Root as CoreRoot};
+        use nsh_core::prelude::*;
+        use nsh_core::{
+            ApproxTextEngine, Command, Core, EventKind, EventPayload, MountBatch, MountItem,
+            NodeId, PressEvent, ROOT_ID,
+        };
+
+        #[component]
+        fn TrayAndProgressDriver() -> impl IntoElement {
+            bento::shell::init_autostart_for_test(false);
+            bento::shell::desktop_window(crate::APP_META.name, 720.0, 560.0, 48.0, || {
+                view()
+                    .flex_1()
+                    .child(super::screen())
+                    .child(view().test_id("flip-busy").on_press(|| {
+                        crate::store::set_busy(true);
+                        crate::store::set_busy(false);
+                    }))
+                    .child(view().test_id("set-prog").on_press(|| {
+                        crate::store::set_taskbar_progress(WindowProgressState::Normal, Some(0.5));
+                    }))
+                    .child(view().test_id("clear-prog").on_press(|| {
+                        crate::store::clear_taskbar_progress();
+                    }))
+            })
+        }
+
+        let mut core = Core::new(ApproxTextEngine, size(px(860.0), px(640.0)));
+        core.set_components(nsh_base::registry());
+        let mut env = Environment::default();
+        env.os = Os::Windows;
+        env.idiom = Idiom::Desktop;
+        env.window = size(px(860.0), px(640.0));
+        core.set_environment(env);
+
+        core.mount_root(&CoreRoot::of::<TrayAndProgressDriver>());
+        let batch = core.commit().unwrap();
+
+        let tray_cmds = |b: &MountBatch| -> usize {
+            b.items
+                .iter()
+                .filter(|item| {
+                    matches!(
+                        item,
+                        MountItem::Command {
+                            id: ROOT_ID,
+                            command: Command::Desktop(cmd),
+                        } if matches!(cmd.as_ref(), DesktopCommand::SetTray(_))
+                    )
+                })
+                .count()
+        };
+        let find_tid = |b: &MountBatch, tid: &str| -> NodeId {
+            b.items
+                .iter()
+                .find_map(|item| match item {
+                    MountItem::ViewProps { id, props }
+                        if props.test_id.as_deref() == Some(tid) =>
+                    {
+                        Some(*id)
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("missing test_id {tid}"))
+        };
+        let win_id = batch
+            .items
+            .iter()
+            .find_map(|item| match item {
+                MountItem::Command {
+                    id,
+                    command: Command::Desktop(cmd),
+                } => match cmd.as_ref() {
+                    DesktopCommand::OpenWindow(open) if open.options.id == "main" => Some(*id),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .expect("expected OpenWindow for main");
+
+        assert_eq!(tray_cmds(&batch), 1, "initial mount should install tray once");
+
+        let flip_id = find_tid(&batch, "flip-busy");
+        let set_prog_id = find_tid(&batch, "set-prog");
+        let clear_prog_id = find_tid(&batch, "clear-prog");
+
+        // Transient busy() flips must NOT re-emit SetTray (prevents Win32 menu ID invalidation).
+        assert!(core.component_event(
+            flip_id,
+            EventKind::Press,
+            &EventPayload::Press(PressEvent::default()),
+        ));
+        let batch = core.commit().unwrap();
+        assert_eq!(tray_cmds(&batch), 0, "busy flip must not re-install tray");
+
+        // Taskbar progress sets & clears attributes on Target::Own ("main").
+        assert!(core.component_event(
+            set_prog_id,
+            EventKind::Press,
+            &EventPayload::Press(PressEvent::default()),
+        ));
+        let batch = core.commit().unwrap();
+        let wp = batch
+            .items
+            .iter()
+            .find_map(|item| match item {
+                MountItem::Command {
+                    id,
+                    command: Command::Desktop(cmd),
+                } if *id == win_id => match cmd.as_ref() {
+                    DesktopCommand::SetAttributes(a) => a.progress.flatten(),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .expect("expected taskbar WindowProgress SetAttributes on main window");
+        assert_eq!(wp.state, WindowProgressState::Normal);
+        assert_eq!(wp.value, Some(Percentage(0.5)));
+
+        assert!(core.component_event(
+            clear_prog_id,
+            EventKind::Press,
+            &EventPayload::Press(PressEvent::default()),
+        ));
+        let batch = core.commit().unwrap();
+        assert!(
+            batch.items.iter().any(|item| match item {
+                MountItem::Command {
+                    id,
+                    command: Command::Desktop(cmd),
+                } if *id == win_id => matches!(
+                    cmd.as_ref(),
+                    DesktopCommand::SetAttributes(a) if a.progress == Some(None)
+                ),
+                _ => false,
+            }),
+            "expected clear_taskbar_progress to emit progress = Some(None)"
+        );
     }
 }

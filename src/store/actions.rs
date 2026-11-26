@@ -10,16 +10,17 @@ use std::net::TcpListener;
 use std::rc::Rc;
 use std::time::Duration;
 
+use bento::shell::WindowProgressState;
 use nsh_core::file_dialog::{FileFilter, OpenDialog, SaveDialog};
 use nsh_core::prelude::*;
 use nsh_core::time::unix_ms;
 
 use super::{
-    account_by_id, account_count, account_ids, busy, clear_notice, clear_selection, export_items,
-    insert_account, mark_last_used_account, proxy, proxy_testing, refresh_account,
-    selected_account_ids, set_busy, set_import_progress, set_notice, set_proxy_testing,
-    set_switching_account_id, set_token, set_update_status, switching_account_id, update_checking,
-    ImportProgress, Tone, UpdateStatus,
+    account_by_id, account_count, account_ids, busy, clear_notice, clear_selection,
+    clear_taskbar_progress, export_items, insert_account, mark_last_used_account, proxy,
+    proxy_testing, refresh_account, selected_account_ids, set_busy, set_import_progress,
+    set_notice, set_proxy_testing, set_switching_account_id, set_taskbar_progress, set_token,
+    set_update_status, switching_account_id, update_checking, ImportProgress, Tone, UpdateStatus,
 };
 use crate::google::{self, ImportEntry};
 use crate::launch;
@@ -131,6 +132,19 @@ pub(crate) fn refresh_all() {
     refresh_ids(account_ids(), false);
 }
 
+fn update_batch_taskbar_progress(completed: usize, total: usize) {
+    if total == 0 {
+        clear_taskbar_progress();
+    } else if completed == 0 {
+        set_taskbar_progress(WindowProgressState::Indeterminate, None);
+    } else {
+        set_taskbar_progress(
+            WindowProgressState::Normal,
+            Some(completed as f32 / total as f32),
+        );
+    }
+}
+
 fn refresh_ids(ids: Vec<u32>, is_selection: bool) {
     let count = ids.len();
     for &id in &ids {
@@ -146,8 +160,11 @@ fn refresh_ids(ids: Vec<u32>, is_selection: bool) {
                 account_by_id(id).is_some_and(|account| account.error.is_some())
             })
         },
-        |_, _, _, _| {},
+        |completed, total, _, _| {
+            update_batch_taskbar_progress(completed, total);
+        },
         move |failures| {
+            clear_taskbar_progress();
             set_busy(false);
             let failed = failures.into_iter().filter(|failed| *failed).count();
             if failed == 0 {
@@ -171,12 +188,14 @@ pub(crate) fn add_tokens(text: String) {
         set_notice("没有识别到 refresh_token", Tone::Bad);
         return;
     }
+    let total = tokens.len();
     set_busy(true);
+    update_batch_taskbar_progress(0, total);
     spawn(async move {
         let proxy = proxy();
         let mut added = 0;
         let mut failed = Vec::new();
-        for token in tokens {
+        for (idx, token) in tokens.into_iter().enumerate() {
             match google::refresh(&token, proxy.clone()).await {
                 Ok(tokens) => match google::email(&tokens.access_token, proxy.clone()).await {
                     Ok(email) => {
@@ -189,7 +208,9 @@ pub(crate) fn add_tokens(text: String) {
                 },
                 Err(error) => failed.push(error),
             }
+            update_batch_taskbar_progress(idx + 1, total);
         }
+        clear_taskbar_progress();
         set_busy(false);
         if failed.is_empty() {
             set_notice(format!("已添加 {added} 个账号"), Tone::Ok);
@@ -602,6 +623,7 @@ fn run_batch_import(entries: Vec<ImportEntry>) {
             } else {
                 "准备导入…".to_owned()
             };
+            update_batch_taskbar_progress(completed, total);
             set_import_progress(Some(ImportProgress {
                 current: completed,
                 total,
@@ -619,6 +641,7 @@ fn run_batch_import(entries: Vec<ImportEntry>) {
                 .find_map(|res| res.err())
                 .unwrap_or_default();
 
+            clear_taskbar_progress();
             set_import_progress(None);
             set_busy(false);
             if failed == 0 {

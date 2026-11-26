@@ -8,7 +8,7 @@ use nsh_base::{tab, tabs, theme};
 use nsh_core::prelude::*;
 
 use crate::store;
-use crate::ui::{action, action_disabled, modal_dialog, textarea, ButtonKind, ValueTone};
+use crate::ui::{action, action_busy, action_disabled, modal_dialog, textarea, ButtonKind, ValueTone};
 
 /// What the dialog reports: the user asked to close it.
 #[derive(Debug, Clone, PartialEq, Event)]
@@ -124,7 +124,7 @@ fn oauth_panel() -> impl IntoElement {
                 .text_color(move || theme().muted_foreground),
         )
         .child(
-            view().flex_row().child(action_disabled(
+            view().flex_row().child(action_busy(
                 ButtonKind::Primary,
                 move || if store::busy() { "等待授权…" } else { "打开授权页面" },
                 store::busy,
@@ -141,11 +141,14 @@ fn token_panel(tokens: Signal<String>) -> impl IntoElement {
                 .text_xs()
                 .text_color(move || theme().muted_foreground),
         )
-        .child(textarea(
-            move || tokens.get(),
-            r#"1//0g…   或   [{"refresh_token":"1//0g…"}]"#,
-            move |text: &str| tokens.set(text.to_owned()),
-        ))
+        .child(
+            textarea(
+                move || tokens.get(),
+                r#"1//0g…   或   [{"refresh_token":"1//0g…"}]"#,
+                move |text: &str| tokens.set(text.to_owned()),
+            )
+            .select_text_on_focus(true),
+        )
         .child(
             view()
                 .flex_row()
@@ -157,7 +160,7 @@ fn token_panel(tokens: Signal<String>) -> impl IntoElement {
                     move || store::busy() || tokens.with(|text| text.trim().is_empty()),
                     move || store::add_tokens(tokens.get_untracked()),
                 ))
-                .child(action_disabled(
+                .child(action_busy(
                     ButtonKind::Secondary,
                     "导入账号 JSON",
                     store::busy,
@@ -175,7 +178,7 @@ fn import_panel() -> impl IntoElement {
                 .text_color(move || theme().muted_foreground),
         )
         .child(
-            view().flex_row().child(action_disabled(
+            view().flex_row().child(action_busy(
                 ButtonKind::Primary,
                 move || if store::busy() { "正在读取…" } else { "从本机导入" },
                 store::busy,

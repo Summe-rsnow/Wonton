@@ -7,7 +7,7 @@ test("shows version and opens add-account and about dialogs", async () => {
   const app = await open(".");
   const initial = app.texts().join("\n");
   expect(initial).toContain("还没有账号");
-  expect(initial).toContain("v1.2.3");
+  expect(initial).toContain("v1.4.0");
 
   await app.press("role:button[添加账号…]");
   const addTexts = app.texts().join("\n");

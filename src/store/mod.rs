@@ -173,6 +173,31 @@ fn state() -> Signal<State> {
     global::<State>()
 }
 
+#[derive(Clone, Default)]
+struct MainWindowSlot(Option<nsh_core::element::desktop::WindowRef>);
+
+/// Registers the active main desktop window handle so background store actions
+/// (batch refresh / import) can report taskbar progress on `Target::Own`.
+pub(crate) fn set_main_window(window: nsh_core::element::desktop::WindowRef) {
+    global::<MainWindowSlot>().set(MainWindowSlot(Some(window)));
+}
+
+pub(crate) fn set_taskbar_progress(state: bento::shell::WindowProgressState, value: Option<f32>) {
+    if let Some(window) =
+        try_global::<MainWindowSlot>().and_then(|s| s.with_untracked(|slot| slot.0.clone()))
+    {
+        bento::shell::set_window_progress(&window, state, value);
+    }
+}
+
+pub(crate) fn clear_taskbar_progress() {
+    if let Some(window) =
+        try_global::<MainWindowSlot>().and_then(|s| s.with_untracked(|slot| slot.0.clone()))
+    {
+        bento::shell::clear_window_progress(&window);
+    }
+}
+
 /// Reads the saved accounts, proxy, theme, and close preference, once, when the app starts.
 pub(crate) fn load() {
     bento::shell::init_autostart("com.xcmm.wonton", Some("Wonton"));
@@ -1061,7 +1086,7 @@ mod tests {
             fn load(&self) -> Result<BTreeMap<String, String>, String> {
                 Ok(self.entries.lock().unwrap().clone())
             }
-            fn write(&self, change: StorageChange) {
+            fn write(&self, change: StorageChange) -> Result<(), String> {
                 let mut entries = self.entries.lock().unwrap();
                 match change {
                     StorageChange::Set(k, v) => {
@@ -1072,6 +1097,7 @@ mod tests {
                     }
                     StorageChange::Clear => entries.clear(),
                 }
+                Ok(())
             }
         }
 
